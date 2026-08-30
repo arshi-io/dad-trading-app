@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Papa Terminal{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0E1117;
+      --surface: #171B23;
+      --surface-2: #1D2330;
+      --border: #262B36;
+      --border-strong: #333A48;
+      --text: #E8EAED;
+      --muted: #9CA3AF;
+      --muted-2: #6B7280;
+
+      --green: #22C55E;   --green-dim: #14251A;
+      --red: #EF4444;     --red-dim: #2B1616;
+      --amber: #F59E0B;   --amber-dim: #2B2010;
+      --blue: #3B82F6;    --blue-dim: #131E33;
+
+      --radius: 12px;
+      --nav-height: 64px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", "Consolas", "Roboto Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: var(--font-sans);
+      font-size: 18px;
+      line-height: 1.6;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+    }
+    a { color: var(--blue); }
+    h1 { font-size: 30px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 4px 0; }
+    h2 { font-size: 22px; font-weight: 700; margin: 0 0 14px 0; }
+    h3 { font-size: 18px; font-weight: 700; margin: 0 0 10px 0; }
+    p { margin: 0 0 10px 0; }
+    .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+    /* ---- chrome: nav + status bar ---- */
+    nav {
+      position: sticky; top: 0; z-index: 30;
+      display: flex; align-items: center;
+      min-height: var(--nav-height);
+      background: var(--surface);
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 8px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: 0.06em;
+      color: var(--text);
+      padding-right: 18px;
+      margin-right: 6px;
+      border-right: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .brand .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      flex-shrink: 0;
+    }
+    nav a.tab {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 0 16px;
+      height: var(--nav-height);
+      display: inline-flex; align-items: center;
+      font-size: 17px;
+      font-weight: 600;
+      white-space: nowrap;
+      border-bottom: 3px solid transparent;
+      transition: color .15s ease, border-color .15s ease;
+    }
+    nav a.tab.active { color: var(--text); border-bottom-color: var(--blue); }
+    nav a.tab:not(.active):hover { color: var(--text); }
+
+    .nav-search { display: flex; align-items: center; gap: 8px; margin-left: auto; padding-left: 16px; flex-shrink: 0; }
+    .nav-search input[type="text"] {
+      background: var(--surface-2);
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      padding: 9px 14px;
+      border-radius: 8px;
+      width: 200px;
+      outline: none;
+      transition: border-color .15s ease;
+    }
+    .nav-search input[type="text"]::placeholder { color: var(--muted-2); }
+    .nav-search input[type="text"]:focus { border-color: var(--blue); }
+    .nav-search .btn-ghost { padding: 9px 16px; font-size: 15px; white-space: nowrap; }
+
+    /* Stock Room's own top-of-page search -- full content-size, per papa-ux 18px+ */
+    .stock-search { display: flex; gap: 10px; flex-wrap: wrap; }
+    .stock-search input[type="text"] {
+      flex: 1; min-width: 220px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 18px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color .15s ease;
+    }
+    .stock-search input[type="text"]::placeholder { color: var(--muted-2); }
+    .stock-search input[type="text"]:focus { border-color: var(--blue); }
+
+    main { padding: 24px; max-width: 1160px; margin: 0 auto; }
+
+    .status-bar {
+      display: flex; align-items: center; gap: 10px;
+      color: var(--muted);
+      font-size: 15px;
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .status-dot.stale { background: var(--amber); }
+    .status-bar .ts { color: var(--text); }
+
+    .stale-banner {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--amber-dim);
+      border: 1px solid var(--amber);
+      border-left: 4px solid var(--amber);
+      color: var(--amber);
+      padding: 14px 18px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-weight: 700;
+      font-size: 17px;
+    }
+
+    /* ---- surfaces ---- */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px 24px;
+      margin-bottom: 20px;
+    }
+    .card-2 { background: var(--surface-2); }
+    .term { border-bottom: 1px dotted var(--muted-2); cursor: help; }
+
+    .empty-state {
+      color: var(--muted);
+      padding: 30px 20px;
+      text-align: center;
+      border: 1px dashed var(--border-strong);
+      border-radius: 10px;
+      font-size: 17px;
+    }
+
+    /* ---- buttons ---- */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--blue);
+      color: #fff;
+      text-decoration: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 17px;
+      border: 1px solid var(--blue);
+      transition: filter .15s ease;
+    }
+    .btn:hover { filter: brightness(1.12); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border-strong); }
+    .btn-ghost:hover { border-color: var(--muted); filter: none; }
+
+    /* ---- status words + chips (word + color, never color alone) ---- */
+    .word-good { color: var(--green); font-weight: 700; }
+    .word-bad  { color: var(--red);   font-weight: 700; }
+    .word-wait { color: var(--amber); font-weight: 700; }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 5px 13px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: 0.03em;
+      border: 1px solid currentColor;
+      white-space: nowrap;
+    }
+    .chip.good { color: var(--green); background: var(--green-dim); }
+    .chip.bad  { color: var(--red);   background: var(--red-dim); }
+    .chip.wait { color: var(--amber); background: var(--amber-dim); }
+    .chip.neutral { color: var(--muted); background: var(--surface-2); border-color: var(--border-strong); }
+
+    /* ---- disclosure (details/summary) reveal ---- */
+    summary { cursor: pointer; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    .chevron {
+      display: inline-block;
+      color: var(--muted-2);
+      font-family: var(--font-mono);
+      transition: transform .18s ease, color .18s ease;
+    }
+    details[open] .chevron { transform: rotate(90deg); color: var(--text); }
+    @keyframes revealDown {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    details[open] > .reveal { animation: revealDown .18s ease; }
+
+    @media (max-width: 900px) {
+      .nav-search input[type="text"] { width: 140px; }
+    }
+    @media (max-width: 720px) {
+      main { padding: 16px; }
+      h1 { font-size: 26px; }
+      .nav-search { width: 100%; margin: 10px 0; padding-left: 0; }
+      .nav-search input[type="text"] { width: 100%; }
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <datalist id="ticker-directory-list">
+    {% for t in ticker_directory %}
+    <option value="{{ t.symbol }}">{{ t.name }}</option>
+    {% endfor %}
+  </datalist>
+  <nav>
+    <span class="brand"><span class="dot"></span>PAPA TERMINAL</span>
+    <a href="/" class="tab {{ 'active' if active_tab == 'today' else '' }}">Today</a>
+    <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Minervini Screen</a>
+    <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Spread Trades</a>
+    <a href="/stock/RELIANCE.NS" class="tab {{ 'active' if active_tab == 'stock' else '' }}">Stock Room</a>
+    <a href="/diary" class="tab {{ 'active' if active_tab == 'diary' else '' }}">Diary</a>
+    <form class="nav-search" onsubmit="event.preventDefault(); papaGoToTicker(document.getElementById('nav-ticker-input').value);">
+      <input id="nav-ticker-input" type="text" list="ticker-directory-list" autocomplete="off"
+             placeholder="Search any NSE stock&hellip;" aria-label="Search any NSE stock" />
+      <button type="submit" class="btn-ghost">Go</button>
+    </form>
+  </nav>
+  <main>
+    <div class="status-bar">
+      <span class="status-dot {{ 'stale' if stale else '' }}"></span>
+      <span>Data as of <span class="ts mono">{{ generated_at or "unknown" }}</span> IST</span>
+    </div>
+    {% if stale %}
+    <div class="stale-banner">Data update pending — showing yesterday</div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+    // Normalizes free-typed input ("reliance", "RELIANCE ", "reliance.ns") to
+    // a yfinance-style NSE ticker and navigates to its Stock Room page.
+    // Mirrors _normalize_ticker() in main.py, which re-normalizes server-side
+    // too (direct URL hits / bookmarks don't go through this JS at all).
+    function papaGoToTicker(raw) {
+      if (!raw) return;
+      let t = raw.replace(/\s+/g, '').toUpperCase();
+      if (!t) return;
+      if (!t.endsWith('.NS')) t = t + '.NS';
+      window.location.href = '/stock/' + encodeURIComponent(t);
+    }
+  </script>
+</body>
+</html>

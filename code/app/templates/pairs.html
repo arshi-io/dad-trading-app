@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Spread Trades — Papa Terminal{% endblock %}
+{% block extra_head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  .pair-card { margin-bottom: 24px; padding-bottom: 20px; }
+  .pair-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
+  .pair-name { font-family: var(--font-mono); font-size: 22px; font-weight: 700; }
+  .pair-grid { display: grid; grid-template-columns: 0.9fr 1.3fr; gap: 24px; margin-top: 8px; }
+  .gauge-box { text-align: center; }
+  .zscore-big { font-family: var(--font-mono); font-size: 15px; color: var(--muted); margin-top: -8px; }
+
+  .trade-line {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; margin: 14px 0;
+  }
+  .trade-line .lbl { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .trade-line .val { font-family: var(--font-mono); font-size: 17px; }
+
+  .footer-note { color: var(--muted); font-size: 15px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .footer-note .mono { color: var(--muted); }
+  .why-text { color: var(--muted); font-size: 15px; }
+  .why-text strong { color: var(--text); font-weight: 600; }
+
+  @media (max-width: 780px) {
+    .pair-grid { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Spread Trades</h1>
+
+{% if items %}
+{% for item in items %}
+<div class="card pair-card">
+  <div class="pair-head">
+    <span class="pair-name">{{ item.pair }}</span>
+    {% if item.status in ("BUY", "SELL") %}
+    <span class="chip good">ENTRY ZONE</span>
+    {% elif item.status == "HOLD" %}
+    <span class="chip wait">EXIT</span>
+    {% else %}
+    <span class="chip neutral">WAIT</span>
+    {% endif %}
+  </div>
+  {% if item.status in ("BUY", "SELL") %}
+  <div class="why-text" style="margin-top:6px;">
+    <strong>SPREAD STRETCHED</strong> — mean-reversion entry:
+    {{ "long " + item.ticker_a + " / short " + item.ticker_b if item.status == "BUY" else "short " + item.ticker_a + " / long " + item.ticker_b }}
+  </div>
+  {% endif %}
+
+  <div class="pair-grid">
+    <div>
+      <div class="gauge-box">
+        <div id="gauge-{{ loop.index }}" style="width: 340px; height: 210px; margin: 0 auto;"></div>
+        <div class="zscore-big"><span class="term" title="How stretched the rubber band is; ±2 = fully stretched, time to consider a trade.">z-score</span> {{ "%.2f"|format(item.zscore) }} &middot; 60d window</div>
+      </div>
+      <div class="trade-line">
+        <div class="lbl"><span class="term" title="Buy/sell these share quantities to hold the pair market-neutral, based on the current hedge ratio.">Trade size</span></div>
+        <div class="val">Buy {{ item.qty_a }} {{ item.ticker_a }} &nbsp;:&nbsp; Sell {{ item.qty_b }} {{ item.ticker_b }}</div>
+      </div>
+    </div>
+    <div>
+      <div id="spread-{{ loop.index }}" style="height: 300px;"></div>
+    </div>
+  </div>
+
+  <div class="footer-note">
+    Last cointegration re-test: <span class="mono">{{ last_scan or "unknown" }}</span> &middot;
+    <span class="term mono" title="p-value from the Engle-Granger cointegration test; lower means the pair's spread is more reliably mean-reverting.">p={{ "%.4f"|format(item.pvalue) }}</span> &middot;
+    half-life <span class="mono">{{ "%.1f"|format(item.half_life_days) }}d</span> &middot;
+    hard exit beyond &plusmn;3.5&sigma;
+  </div>
+</div>
+<script>
+(function() {
+  const z = {{ item.zscore }};
+  const entryZ = {{ item.entry_z }};
+  const zoneColor = Math.abs(z) >= entryZ ? "#22C55E" : "#3B82F6";
+
+  Plotly.newPlot("gauge-{{ loop.index }}", [{
+    type: "indicator",
+    mode: "gauge+number",
+    value: z,
+    number: { valueformat: ".2f", font: { size: 40, color: "#E8EAED", family: "ui-monospace, Consolas, monospace" } },
+    gauge: {
+      shape: "angular",
+      axis: { range: [-3.5, 3.5], tickcolor: "#6B7280", tickfont: { color: "#9CA3AF", size: 11 } },
+      bar: { color: "rgba(0,0,0,0)", thickness: 0 },
+      bgcolor: "#1D2330",
+      borderwidth: 0,
+      steps: [
+        { range: [-3.5, -entryZ], color: "#14251A" },
+        { range: [-entryZ, entryZ], color: "#262E40" },
+        { range: [entryZ, 3.5], color: "#14251A" },
+      ],
+      threshold: { line: { color: zoneColor, width: 5 }, thickness: 0.85, value: z },
+    },
+  }], {
+    width: 340,
+    height: 210,
+    paper_bgcolor: "transparent",
+    font: { color: "#E8EAED", size: 14 },
+    margin: { t: 10, b: 0, l: 30, r: 30 },
+  }, { displayModeBar: false });
+
+  const spread = {{ item.spread_series | tojson }};
+  const upper = {{ item.upper_band_series | tojson }};
+  const lower = {{ item.lower_band_series | tojson }};
+  Plotly.newPlot("spread-{{ loop.index }}", [
+    {
+      x: lower.map(p => new Date(p[0])), y: lower.map(p => p[1]), mode: "lines", name: "-" + entryZ + "σ",
+      line: { color: "#333A48", width: 1 }, showlegend: false,
+    },
+    {
+      x: upper.map(p => new Date(p[0])), y: upper.map(p => p[1]), mode: "lines", name: "±" + entryZ + "σ band",
+      line: { color: "#333A48", width: 1 }, fill: "tonexty", fillcolor: "rgba(59,130,246,0.06)",
+    },
+    { x: spread.map(p => new Date(p[0])), y: spread.map(p => p[1]), mode: "lines", name: "spread", line: { color: "#3B82F6", width: 2 } },
+  ], {
+    paper_bgcolor: "transparent",
+    plot_bgcolor: "transparent",
+    font: { color: "#E8EAED", size: 12 },
+    margin: { t: 16, b: 30, l: 44, r: 16 },
+    legend: { orientation: "h", font: { size: 11, color: "#9CA3AF" } },
+    xaxis: { gridcolor: "#262B36", zeroline: false },
+    yaxis: { gridcolor: "#262B36", zeroline: false },
+  }, { displayModeBar: false, responsive: true });
+})();
+</script>
+{% endfor %}
+{% else %}
+<div class="empty-state">No pairs currently tracked — nothing to do is also a decision.</div>
+{% endif %}
+{% endblock %}

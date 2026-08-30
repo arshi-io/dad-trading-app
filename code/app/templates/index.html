@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Today — Papa Terminal{% endblock %}
+{% block extra_head %}
+<style>
+  .regime-banner {
+    position: relative;
+    border-radius: 16px;
+    padding: 34px 30px;
+    margin-bottom: 24px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .regime-banner::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; }
+  .regime-banner.good { background: linear-gradient(120deg, var(--green-dim), var(--surface) 70%); }
+  .regime-banner.good::before { background: var(--green); }
+  .regime-banner.bad  { background: linear-gradient(120deg, var(--red-dim), var(--surface) 70%); }
+  .regime-banner.bad::before  { background: var(--red); }
+  .regime-banner.wait { background: linear-gradient(120deg, var(--amber-dim), var(--surface) 70%); }
+  .regime-banner.wait::before { background: var(--amber); }
+  .regime-label { font-size: 36px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; }
+  .regime-sub { color: var(--muted); font-size: 17px; margin-top: 10px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--border-strong); border-radius: 12px; padding: 20px 22px; }
+  .tile.good { border-top-color: var(--green); }
+  .tile.bad  { border-top-color: var(--red); }
+  .tile-label { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .tile-value { font-size: 30px; font-weight: 700; }
+
+  .briefing-card { border-left: 4px solid var(--blue); }
+  .briefing-list { list-style: none; padding: 0; margin: 0; counter-reset: briefing; }
+  .briefing-list li {
+    counter-increment: briefing;
+    display: flex; gap: 14px; align-items: flex-start;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+  .briefing-list li:last-child { border-bottom: none; padding-bottom: 0; }
+  .briefing-list li:first-child { padding-top: 0; }
+  .briefing-list li::before {
+    content: counter(briefing);
+    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--surface-2); color: var(--muted);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; font-family: var(--font-mono);
+    margin-top: 2px;
+  }
+
+  .queue-item {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .queue-item:last-child { margin-bottom: 0; }
+  .queue-left { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+  .queue-symbol-row { display: flex; align-items: center; gap: 10px; }
+  .queue-symbol { font-family: var(--font-mono); font-weight: 700; font-size: 18px; }
+  .queue-reason { color: var(--muted); font-size: 15px; }
+</style>
+{% endblock %}
+{% block content %}
+
+{% set regime_map = {
+  "TRENDING_UP": ("Market trending UP", "good"),
+  "TRENDING_DOWN": ("Market trending DOWN", "bad"),
+  "CHOPPY": ("Market CHOPPY — no clear trend", "wait"),
+} %}
+{% set regime_info = regime_map.get(regime, (regime, "wait")) %}
+{% set nifty = indices.nifty %}
+
+<div class="regime-banner {{ regime_info[1] }}">
+  <div class="regime-label">{{ regime_info[0] }}</div>
+  <div class="regime-sub">
+    NIFTY <span class="mono">{{ "%.2f"|format(nifty.close) if nifty and nifty.close is not none else "—" }}</span>
+    &nbsp;·&nbsp; Volatility <strong>{{ nifty.vol_state if nifty else "—" }}</strong>
+    &nbsp;·&nbsp; Breadth <span class="mono">{{ "%.1f"|format(nifty.breadth_pct) + "%" if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none else "—" }}</span> of stocks above 200DMA
+  </div>
+</div>
+
+<div class="tiles">
+  <div class="tile">
+    <div class="tile-label">NIFTY 50</div>
+    <div class="tile-value mono">{{ "%.2f"|format(nifty.close) if nifty and nifty.close is not none else "—" }}</div>
+  </div>
+  <div class="tile">
+    <div class="tile-label"><span class="term" title="How stretched the market's volatility is right now — HIGH means bigger daily swings, LOW means calmer trading.">Volatility</span></div>
+    <div class="tile-value">{{ nifty.vol_state if nifty else "—" }}</div>
+  </div>
+  <div class="tile {{ 'good' if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none and nifty.breadth_pct >= 50 else 'bad' if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none else '' }}">
+    <div class="tile-label"><span class="term" title="Percent of stocks trading above their own 200-day average — a broad health check beyond just the index price.">Breadth</span></div>
+    <div class="tile-value mono">
+      {{ "%.1f"|format(nifty.breadth_pct) + "%" if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none else "—" }}
+    </div>
+  </div>
+</div>
+
+<div class="card briefing-card">
+  <h2>Morning Briefing</h2>
+  {% if briefing %}
+  <ul class="briefing-list">
+    {% for item in briefing %}<li>{{ item.text }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty-state">No briefing yet — nothing to do is also a decision.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Action Queue</h2>
+  {% if action_queue %}
+  {% for item in action_queue %}
+  <div class="queue-item">
+    <div class="queue-left">
+      <div class="queue-symbol-row">
+        <span class="queue-symbol">{{ item.symbol }}</span>
+        <span class="chip {{ 'good' if item.action == 'BUY' else ('bad' if item.action == 'SELL' else 'wait') }}">{{ item.action }}</span>
+      </div>
+      <div class="queue-reason">{{ item.reason }}</div>
+    </div>
+    <a class="btn" href="{{ item.link }}">{{ "Open Spread Trades" if item.link == "/pairs" else "Open Stock Room" }} &rarr;</a>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="empty-state">No new signals — nothing to do is also a decision.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

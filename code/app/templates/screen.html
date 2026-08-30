@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Minervini Screen — Papa Terminal{% endblock %}
+{% block extra_head %}
+<style>
+  .screen-summary {
+    display: flex; gap: 28px; flex-wrap: wrap;
+    margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--border);
+  }
+  .summary-stat .num { font-size: 26px; font-weight: 700; }
+  .summary-stat .label { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+
+  .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    background: var(--surface-2);
+    text-align: left; padding: 12px 16px;
+    color: var(--muted); font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+  }
+  .row-num { width: 48px; color: var(--muted-2); }
+  tbody tr.data-row:nth-child(even) { background: rgba(255,255,255,0.015); }
+  tbody tr.data-row:hover { background: var(--surface-2); }
+  .row-details { display: contents; }
+  .row-summary { padding: 0; }
+  .row-summary summary {
+    display: grid;
+    grid-template-columns: 48px 1.4fr 90px 180px 90px 130px;
+    align-items: center;
+    padding: 13px 16px;
+    gap: 10px;
+  }
+  .symbol-cell { font-family: var(--font-mono); font-weight: 700; font-size: 17px; display: flex; align-items: center; gap: 10px; }
+  .chevron { font-size: 15px; }
+  .row-link { font-size: 14px; text-decoration: none; white-space: nowrap; justify-self: end; }
+  .row-link:hover { text-decoration: underline; }
+
+  .rs-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 42px; padding: 4px 9px;
+    border-radius: 7px; font-family: var(--font-mono); font-weight: 700; font-size: 15px;
+    border: 1px solid var(--border-strong); color: var(--muted);
+  }
+  .rs-badge.strong { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .rs-badge.pass   { background: transparent; border-color: var(--green); color: var(--green); }
+
+  .conditions-cell { color: var(--muted); font-family: var(--font-mono); font-size: 15px; }
+
+  .row-expand-cell { padding: 0 16px 22px 16px; }
+  .row-expand-inner { padding: 18px 20px; background: var(--surface-2); border-radius: 10px; border: 1px solid var(--border); }
+
+  .why-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .why-text { color: var(--muted); font-size: 15px; }
+  .why-text strong { color: var(--text); font-weight: 600; }
+
+  .scorecard { display: flex; gap: 4px; margin-bottom: 18px; }
+  .scorecard-seg { flex: 1; height: 8px; border-radius: 4px; background: var(--border-strong); }
+  .scorecard-seg.on { background: var(--green); }
+
+  .check-row { display: flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  .check-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .check-row:first-child { padding-top: 0; }
+  .check-badge {
+    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 14px; margin-top: 1px;
+  }
+  .check-row.pass .check-badge { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+  .check-row.fail .check-badge { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+  .check-label { font-weight: 600; }
+  .check-detail { color: var(--muted); font-size: 15px; font-family: var(--font-mono); margin-top: 3px; }
+
+  .vcp-section { margin-top: 28px; }
+  .vcp-label { color: var(--muted); font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+
+  @media (max-width: 720px) {
+    .row-summary summary { grid-template-columns: 32px 1fr 70px; }
+    .conditions-cell { display: none; }
+    .row-link { display: none; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Minervini Trend Template</h1>
+
+{% if items %}
+{% set passed_items = items | selectattr('passed') | list %}
+<div class="screen-summary">
+  <div class="summary-stat">
+    <div class="num mono">{{ items | length }}</div>
+    <div class="label">Stocks screened</div>
+  </div>
+  <div class="summary-stat">
+    <div class="num mono word-good">{{ passed_items | length }}</div>
+    <div class="label">Stage 2 (8/8)</div>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th class="row-num">#</th>
+      <th>Stock</th>
+      <th><span class="term" title="Relative Strength rank: how this stock's price momentum compares to the rest of the market, 0-99. Higher is stronger.">RS Rank</span></th>
+      <th>Status</th>
+      <th>Conditions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr class="data-row">
+      <td colspan="5" class="row-summary">
+        <details class="row-details">
+          <summary>
+            <span class="row-num mono">{{ loop.index }}</span>
+            <span class="symbol-cell"><span class="chevron">&#9656;</span>{{ item.symbol }}</span>
+            <span class="rs-badge {{ 'strong' if item.rs_rank is not none and item.rs_rank >= 90 else ('pass' if item.rs_rank is not none and item.rs_rank >= 70 else '') }}">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span>
+            <span class="chip {{ item.stance_class or 'neutral' }}">{{ item.stance or "—" }}</span>
+            <span class="conditions-cell">{{ item.conditions_passed }} / 8</span>
+            <a class="row-link" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
+          </summary>
+          <div class="reveal row-expand-cell">
+            <div class="row-expand-inner">
+              <div class="why-row">
+                <div class="why-text"><strong>Why:</strong> {{ item.stance_evidence | join(' · ') }}</div>
+                <a class="btn btn-ghost" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
+              </div>
+              <div class="scorecard">
+                {% for c in item.checklist %}
+                <div class="scorecard-seg {{ 'on' if c.passed else '' }}" title="{{ c.label }}"></div>
+                {% endfor %}
+              </div>
+              {% for c in item.checklist %}
+              <div class="check-row {{ 'pass' if c.passed else 'fail' }}">
+                <span class="check-badge">{{ "✓" if c.passed else "✗" }}</span>
+                <div>
+                  <div class="check-label">{{ c.label }}</div>
+                  <div class="check-detail">{{ c.detail }}</div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </details>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state">No screen data yet — nothing to do is also a decision.</div>
+{% endif %}
+
+<div class="vcp-section">
+  <h2>VCP Watch</h2>
+  <div class="vcp-label">algorithm-detected — verify on chart</div>
+  <div class="empty-state">No VCP setups flagged yet — this screen is still being built out.</div>
+</div>
+{% endblock %}
