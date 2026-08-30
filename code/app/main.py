@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
+import logging
 import os
 import re
+import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.base import BaseHTTPMiddleware
 import pandas as pd
 import yfinance as yf
 
@@ -18,6 +27,11 @@ from code.evaluator.memo import build_bundle, generate_memo, match_headlines
 from code.pipeline.news_rss import fetch_news_items
 from code.pipeline.nightly_pipeline import kite_fetch
 from code.signals.mean_rev import generate_signals as generate_mean_rev_signals
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+IST = ZoneInfo("Asia/Kolkata")
 
 ATR_WINDOW = 14
 ATR_STOP_MULTIPLIER = 1.5  # per the locked risk rule: stop-loss = 1.5x ATR from entry
@@ -66,8 +80,6 @@ def _normalize_ticker(raw: str) -> str:
         ticker = f"{ticker}.NS"
     return ticker
 
-app = FastAPI(title="Papa Terminal")
-
 
 def _load_latest_snapshot() -> Dict[str, Any]:
     """Dashboard reads pre-computed JSON snapshots only -- never recomputes live."""
@@ -87,6 +99,123 @@ def _snapshot_is_stale(snapshot: Dict[str, Any]) -> bool:
     except ValueError:
         return True
     return datetime.now() - generated > STALE_AFTER
+
+
+def _run_nightly_pipeline_sync() -> None:
+    """The actual pipeline call -- synchronous and slow (yfinance/OpenAI/RSS
+    over the network), so every caller below runs it via asyncio.to_thread
+    rather than blocking the event loop."""
+    from code.pipeline.nightly_pipeline import run_pipeline
+    try:
+        logger.info("nightly pipeline run starting")
+        run_pipeline()
+        logger.info("nightly pipeline run finished OK")
+    except Exception:
+        logger.exception("nightly pipeline run failed")
+
+
+async def _run_nightly_pipeline_job() -> None:
+    await asyncio.to_thread(_run_nightly_pipeline_sync)
+
+
+scheduler = AsyncIOScheduler(timezone=IST)
+
+AUTH_USER = os.getenv("AUTH_USER")
+AUTH_PASS = os.getenv("AUTH_PASS")
+# Railway sets this automatically on every deployment -- the presence check,
+# not its value, is what matters here.
+RAILWAY_ENVIRONMENT = os.getenv("RAILWAY_ENVIRONMENT")
+
+
+def _enforce_auth_before_serving() -> None:
+    """This app must never serve unauthenticated on Railway.
+
+    If a Railway environment indicator is present but AUTH_USER/AUTH_PASS
+    aren't both set, refuse to start at all -- a crashed deploy is loud and
+    impossible to miss in Railway's dashboard; a running-but-open dashboard
+    is not. Local dev (no Railway indicator) keeps the existing
+    bypass-when-unset behavior unchanged.
+    """
+    if RAILWAY_ENVIRONMENT and not (AUTH_USER and AUTH_PASS):
+        logger.critical(
+            "REFUSING TO START: RAILWAY_ENVIRONMENT=%r is set (this is a Railway "
+            "deployment) but AUTH_USER/AUTH_PASS are not both configured. This app "
+            "must never serve unauthenticated in production. Set AUTH_USER and "
+            "AUTH_PASS in Railway's Variables panel and redeploy.",
+            RAILWAY_ENVIRONMENT,
+        )
+        raise RuntimeError(
+            "Refusing to start: RAILWAY_ENVIRONMENT is set but AUTH_USER/AUTH_PASS "
+            "are missing. Set both env vars in Railway and redeploy."
+        )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _enforce_auth_before_serving()
+
+    scheduler.add_job(
+        _run_nightly_pipeline_job,
+        CronTrigger(hour=18, minute=30, timezone=IST),
+        id="nightly_1830_ist",
+        name="Nightly pipeline (18:30 IST)",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_nightly_pipeline_job,
+        CronTrigger(hour=8, minute=30, timezone=IST),
+        id="morning_refresh_0830_ist",
+        name="Morning refresh (08:30 IST)",
+        replace_existing=True,
+    )
+    scheduler.start()
+    for job in scheduler.get_jobs():
+        logger.info("scheduled job registered: %s (id=%s) next run: %s", job.name, job.id, job.next_run_time)
+
+    # A deploy or restart can land at any time of day, hours from the next
+    # 18:30/08:30 fire -- if the snapshot on disk is already missing or
+    # stale, kick one immediate background run so the site isn't stuck on
+    # "no data" for up to a full cycle. Fire-and-forget; never blocks startup.
+    if _snapshot_is_stale(_load_latest_snapshot()):
+        logger.info("snapshot missing/stale at startup -- kicking an immediate background pipeline run")
+        asyncio.create_task(_run_nightly_pipeline_job())
+
+    yield
+
+    scheduler.shutdown(wait=False)
+
+
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    """HTTP Basic Auth gate for the whole app.
+
+    Credentials come from AUTH_USER/AUTH_PASS env vars, read live -- never
+    hardcoded. If neither is set (local dev), auth is skipped entirely, the
+    same env-only/no-lockout pattern already used for the LLM API keys.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if not AUTH_USER or not AUTH_PASS:
+            return await call_next(request)
+
+        header = request.headers.get("authorization", "")
+        if header.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(header[6:]).decode("utf-8")
+                username, _, password = decoded.partition(":")
+            except Exception:
+                username, password = "", ""
+            if secrets.compare_digest(username, AUTH_USER) and secrets.compare_digest(password, AUTH_PASS):
+                return await call_next(request)
+
+        return Response(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Papa Terminal"'},
+            content="Authentication required.",
+        )
+
+
+app = FastAPI(title="Papa Terminal", lifespan=lifespan)
+app.add_middleware(BasicAuthMiddleware)
 
 
 def _latest_signal_dict(asset: str, df: pd.DataFrame) -> Dict[str, Any]:
