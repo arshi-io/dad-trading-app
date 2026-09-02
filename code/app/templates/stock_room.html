@@ -17,9 +17,24 @@
   .verdict-card.avoid { border-color: var(--red); background: linear-gradient(160deg, var(--red-dim), var(--surface) 55%); }
   .verdict-card.trade { border-color: var(--green); background: linear-gradient(160deg, var(--green-dim), var(--surface) 55%); }
   .verdict-card.wait  { border-color: var(--amber); background: linear-gradient(160deg, var(--amber-dim), var(--surface) 55%); }
+  .verdict-card.no-edge { border-color: var(--border-strong); background: var(--surface); }
   .verdict-card.sentinel { border-color: var(--border-strong); }
+  .invalidation-box { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .invalidation-box h4 { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 10px 0; font-weight: 700; }
+  .invalidation-list { list-style: none; padding: 0; margin: 0; }
+  .invalidation-list li {
+    padding: 8px 0 8px 22px; position: relative;
+    border-bottom: 1px solid var(--border); font-size: 16px;
+  }
+  .invalidation-list li:last-child { border-bottom: none; }
+  .invalidation-list li::before { content: "→"; position: absolute; left: 0; color: var(--muted-2); }
   .verdict-top { display: flex; align-items: center; gap: 20px; margin-bottom: 8px; flex-wrap: wrap; }
   #score-gauge { width: 130px; height: 100px; flex-shrink: 0; }
+  .setup-quality { font-size: 18px; font-weight: 800; letter-spacing: 0.02em; }
+  .setup-quality.good { color: var(--green); }
+  .setup-quality.wait { color: var(--amber); }
+  .setup-quality.bad { color: var(--red); }
+  .setup-quality-caption { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .verdict-rule { color: var(--muted); font-size: 14px; margin: -4px 0 14px 0; }
   .why-text { color: var(--muted); font-size: 15px; }
   .why-text strong { color: var(--text); font-weight: 600; }
@@ -55,11 +70,22 @@
 <div class="card">
   <h3 class="supporting" style="margin-bottom:14px;">Look up a stock</h3>
   <form class="stock-search" onsubmit="event.preventDefault(); papaGoToTicker(document.getElementById('stock-ticker-input').value);">
-    <input id="stock-ticker-input" type="text" list="ticker-directory-list" autocomplete="off"
-           placeholder="Type a company name or symbol, e.g. Reliance" aria-label="Search any NSE stock" />
+    <div class="typeahead-wrap">
+      <input id="stock-ticker-input" type="text" autocomplete="off"
+             placeholder="Type a company name or symbol, e.g. Reliance" aria-label="Search any NSE stock" />
+      <div id="stock-ticker-dropdown" class="typeahead-dropdown" role="listbox" hidden></div>
+    </div>
     <button type="submit" class="btn">Open</button>
   </form>
 </div>
+<script>
+  // papaAttachTypeahead is defined in base.html's own trailing script, which
+  // (in document order) runs after this block -- defer to DOMContentLoaded
+  // so it's guaranteed to exist by the time this call runs.
+  document.addEventListener('DOMContentLoaded', function () {
+    papaAttachTypeahead('stock-ticker-input', 'stock-ticker-dropdown');
+  });
+</script>
 
 {% if not_found %}
 <div class="card not-found-card">
@@ -85,9 +111,10 @@
   <div id="chart"></div>
 </div>
 
+{% set verdict_card_class = {"AVOID": "avoid", "TRADE_VALID": "trade", "WAIT": "wait", "NO_CLEAR_EDGE": "no-edge"}.get(memo.verdict, "wait") %}
 <div class="grid">
-  <div class="card verdict-card {{ 'sentinel' if memo.reasoning == 'Analysis unavailable' else ('avoid' if memo.verdict == 'AVOID' else ('trade' if memo.verdict == 'TRADE_VALID' else 'wait')) }}">
-    <h2>Verdict</h2>
+  <div class="card verdict-card {{ 'sentinel' if memo.reasoning == 'Analysis unavailable' else verdict_card_class }}">
+    <h2>Setup Review</h2>
     {% if memo.reasoning == "Analysis unavailable" %}
     <div class="sentinel-box">
       <span class="sentinel-dot"></span>
@@ -100,7 +127,11 @@
     <div class="verdict-top">
       <div id="score-gauge"></div>
       <div>
-        <div class="chip {{ stance_class or 'neutral' }}" style="font-size:16px; padding:7px 16px;">{{ stance or memo.verdict }}</div>
+        {% if quality_word %}
+        <div class="setup-quality {{ quality_class }}">SETUP QUALITY: {{ quality_word }}</div>
+        <div class="setup-quality-caption">Quality of the current setup, not a probability of profit.</div>
+        {% endif %}
+        <div class="chip {{ stance_class or 'neutral' }}" style="font-size:16px; padding:7px 16px; margin-top:8px;">{{ stance or memo.verdict }}</div>
       </div>
     </div>
     {% if stance_evidence %}
@@ -112,6 +143,14 @@
     <ul class="risk-flags">
       {% for flag in memo.risk_flags %}<li>{{ flag }}</li>{% endfor %}
     </ul>
+    {% endif %}
+    {% if memo.invalidation %}
+    <div class="invalidation-box">
+      <h4><span class="term" title="If any of these actually happen, the case above no longer holds -- worth a re-check, not a permanent rule.">What would invalidate this</span></h4>
+      <ul class="invalidation-list">
+        {% for cond in memo.invalidation %}<li>{{ cond }}</li>{% endfor %}
+      </ul>
+    </div>
     {% endif %}
     {% endif %}
   </div>
@@ -191,7 +230,7 @@
   });
 
   {% if memo.reasoning != "Analysis unavailable" %}
-  {% set gauge_color = "#EF4444" if memo.verdict == "AVOID" else ("#22C55E" if memo.verdict == "TRADE_VALID" else "#F59E0B") %}
+  {% set gauge_color = {"AVOID": "#EF4444", "TRADE_VALID": "#22C55E", "WAIT": "#F59E0B", "NO_CLEAR_EDGE": "#9CA3AF"}.get(memo.verdict, "#F59E0B") %}
   Plotly.newPlot("score-gauge", [{
     type: "indicator",
     mode: "gauge+number",

@@ -50,7 +50,15 @@
       background: var(--surface);
       padding: 0 20px;
       border-bottom: 1px solid var(--border);
+      /* No overflow rule on nav itself -- overflow-x:auto here would force
+         overflow-y:auto too (CSS quirk: one axis non-visible forces the
+         other to auto), clipping the search dropdown below it. Only the
+         tab strip scrolls; the dropdown lives outside that clipped box. */
+    }
+    .nav-tabs {
+      display: flex; align-items: center;
       overflow-x: auto;
+      min-width: 0;
     }
     .brand {
       display: flex; align-items: center; gap: 8px;
@@ -118,6 +126,31 @@
     }
     .stock-search input[type="text"]::placeholder { color: var(--muted-2); }
     .stock-search input[type="text"]:focus { border-color: var(--blue); }
+
+    /* ---- typeahead dropdown: purely local, filters an in-memory JS array,
+       zero network activity while typing ---- */
+    .typeahead-wrap { position: relative; flex: 1; }
+    .typeahead-dropdown {
+      position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+      background: var(--surface-2);
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      overflow-y: auto;
+      max-height: 320px;
+      z-index: 50;
+      box-shadow: 0 12px 28px rgba(0,0,0,0.45);
+    }
+    .typeahead-dropdown[hidden] { display: none; }
+    .typeahead-item {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 12px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+    }
+    .typeahead-item:last-child { border-bottom: none; }
+    .typeahead-item:hover, .typeahead-item.active { background: var(--border); }
+    .ta-symbol { font-family: var(--font-mono); font-weight: 700; color: var(--text); white-space: nowrap; }
+    .ta-name { color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     main { padding: 24px; max-width: 1160px; margin: 0 auto; }
 
@@ -225,35 +258,41 @@
     @media (max-width: 720px) {
       main { padding: 16px; }
       h1 { font-size: 26px; }
-      .nav-search { width: 100%; margin: 10px 0; padding-left: 0; }
+      nav { flex-wrap: wrap; padding: 10px 16px; }
+      .nav-tabs { width: 100%; }
+      .nav-search { width: 100%; margin: 6px 0 10px 0; padding-left: 0; }
       .nav-search input[type="text"] { width: 100%; }
     }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
 <body>
-  <datalist id="ticker-directory-list">
-    {% for t in ticker_directory %}
-    <option value="{{ t.symbol }}">{{ t.name }}</option>
-    {% endfor %}
-  </datalist>
   <nav>
-    <span class="brand"><span class="dot"></span>PAPA TERMINAL</span>
-    <a href="/" class="tab {{ 'active' if active_tab == 'today' else '' }}">Today</a>
-    <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Minervini Screen</a>
-    <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Spread Trades</a>
-    <a href="/stock/RELIANCE.NS" class="tab {{ 'active' if active_tab == 'stock' else '' }}">Stock Room</a>
-    <a href="/diary" class="tab {{ 'active' if active_tab == 'diary' else '' }}">Diary</a>
+    <div class="nav-tabs">
+      <span class="brand"><span class="dot"></span>PAPA TERMINAL</span>
+      <a href="/" class="tab {{ 'active' if active_tab == 'today' else '' }}">Today</a>
+      <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Minervini Screen</a>
+      <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Spread Trades</a>
+      <a href="/stock/RELIANCE.NS" class="tab {{ 'active' if active_tab == 'stock' else '' }}">Stock Room</a>
+      <a href="/diary" class="tab {{ 'active' if active_tab == 'diary' else '' }}">Diary</a>
+    </div>
     <form class="nav-search" onsubmit="event.preventDefault(); papaGoToTicker(document.getElementById('nav-ticker-input').value);">
-      <input id="nav-ticker-input" type="text" list="ticker-directory-list" autocomplete="off"
-             placeholder="Search any NSE stock&hellip;" aria-label="Search any NSE stock" />
+      <div class="typeahead-wrap">
+        <input id="nav-ticker-input" type="text" autocomplete="off"
+               placeholder="Search any NSE stock&hellip;" aria-label="Search any NSE stock" />
+        <div id="nav-ticker-dropdown" class="typeahead-dropdown" role="listbox" hidden></div>
+      </div>
       <button type="submit" class="btn-ghost">Go</button>
     </form>
   </nav>
   <main>
     <div class="status-bar">
       <span class="status-dot {{ 'stale' if stale else '' }}"></span>
-      <span>Data as of <span class="ts mono">{{ generated_at or "unknown" }}</span> IST</span>
+      {% if stale %}
+      <span>DATA FROM <span class="ts mono">{{ (generated_at.split("T")[0] if generated_at else "unknown") }}</span> — today's analysis hasn't completed</span>
+      {% else %}
+      <span>Market data: <span class="ts mono">{{ market_data_label or "unknown" }}</span> &middot; Analysis: <span class="ts mono">{{ analysis_age_label or "unknown" }}</span></span>
+      {% endif %}
     </div>
     {% if stale %}
     <div class="stale-banner">Data update pending — showing yesterday</div>
@@ -261,17 +300,98 @@
     {% block content %}{% endblock %}
   </main>
   <script>
+    // Full NIFTY 500 symbol+name list, loaded once per page as plain data --
+    // typing filters this in-memory array only. Zero network requests fire
+    // until a stock is actually selected (then it's a normal page nav to
+    // /stock/{ticker}, not a fetch).
+    const PAPA_TICKER_DIRECTORY = {{ ticker_directory | tojson }};
+
     // Normalizes free-typed input ("reliance", "RELIANCE ", "reliance.ns") to
     // a yfinance-style NSE ticker and navigates to its Stock Room page.
     // Mirrors _normalize_ticker() in main.py, which re-normalizes server-side
     // too (direct URL hits / bookmarks don't go through this JS at all).
-    function papaGoToTicker(raw) {
-      if (!raw) return;
+    function papaNormalizeTicker(raw) {
+      if (!raw) return '';
       let t = raw.replace(/\s+/g, '').toUpperCase();
+      if (t && !t.endsWith('.NS')) t = t + '.NS';
+      return t;
+    }
+
+    function papaGoToTicker(raw) {
+      const t = papaNormalizeTicker(raw);
       if (!t) return;
-      if (!t.endsWith('.NS')) t = t + '.NS';
       window.location.href = '/stock/' + encodeURIComponent(t);
     }
+
+    // Purely local typeahead: filters PAPA_TICKER_DIRECTORY (already in
+    // memory) on every keystroke, renders at most 8 matches, no fetch(),
+    // no datalist. Symbol-prefix matches rank above substring/name matches.
+    function papaAttachTypeahead(inputId, dropdownId) {
+      const input = document.getElementById(inputId);
+      const dropdown = document.getElementById(dropdownId);
+      if (!input || !dropdown) return;
+
+      let matches = [];
+      let activeIndex = -1;
+
+      function render() {
+        dropdown.innerHTML = '';
+        if (matches.length === 0) { dropdown.hidden = true; return; }
+        matches.forEach((m, i) => {
+          const row = document.createElement('div');
+          row.className = 'typeahead-item' + (i === activeIndex ? ' active' : '');
+          row.setAttribute('role', 'option');
+
+          const symSpan = document.createElement('span');
+          symSpan.className = 'ta-symbol';
+          symSpan.textContent = m.symbol.replace('.NS', '');
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'ta-name';
+          nameSpan.textContent = m.name;
+
+          row.appendChild(symSpan);
+          row.appendChild(nameSpan);
+          row.addEventListener('mousedown', (e) => { e.preventDefault(); select(m); });
+          dropdown.appendChild(row);
+        });
+        dropdown.hidden = false;
+      }
+
+      function select(m) {
+        input.value = m.symbol;
+        dropdown.hidden = true;
+        papaGoToTicker(m.symbol);
+      }
+
+      function filterNow() {
+        const q = input.value.trim().toUpperCase();
+        activeIndex = -1;
+        if (!q) { matches = []; render(); return; }
+        const starts = [];
+        const contains = [];
+        for (const t of PAPA_TICKER_DIRECTORY) {
+          const sym = t.symbol.replace('.NS', '');
+          if (sym.startsWith(q)) starts.push(t);
+          else if (sym.includes(q) || t.name.toUpperCase().includes(q)) contains.push(t);
+        }
+        matches = starts.concat(contains).slice(0, 8);
+        render();
+      }
+
+      input.addEventListener('input', filterNow);
+      input.addEventListener('keydown', (e) => {
+        if (dropdown.hidden || matches.length === 0) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, matches.length - 1); render(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); render(); }
+        else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); select(matches[activeIndex]); }
+        else if (e.key === 'Escape') { dropdown.hidden = true; }
+      });
+      input.addEventListener('blur', () => { setTimeout(() => { dropdown.hidden = true; }, 150); });
+      input.addEventListener('focus', () => { if (input.value.trim()) filterNow(); });
+    }
+
+    papaAttachTypeahead('nav-ticker-input', 'nav-ticker-dropdown');
   </script>
 </body>
 </html>

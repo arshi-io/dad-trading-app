@@ -55,6 +55,40 @@
   .queue-symbol-row { display: flex; align-items: center; gap: 10px; }
   .queue-symbol { font-family: var(--font-mono); font-weight: 700; font-size: 18px; }
   .queue-reason { color: var(--muted); font-size: 15px; }
+
+  .watchlist-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    padding: 14px 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .watchlist-row:last-child { border-bottom: none; }
+  .watchlist-symbol { font-family: var(--font-mono); font-weight: 700; font-size: 17px; min-width: 130px; }
+  .watchlist-change { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .watchlist-arrow { font-size: 20px; font-weight: 800; width: 20px; text-align: center; }
+  .watchlist-arrow.good { color: var(--green); }
+  .watchlist-arrow.bad { color: var(--red); }
+  .watchlist-arrow.neutral { color: var(--muted-2); }
+  .watchlist-nochange { color: var(--muted-2); font-size: 14px; width: auto; font-weight: 400; }
+
+  .shortlist-card { border-left: 4px solid var(--green); }
+  .shortlist-row {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .shortlist-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .shortlist-row:first-child { padding-top: 0; }
+  .shortlist-rank {
+    flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
+    background: var(--surface-2); color: var(--muted);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; font-family: var(--font-mono);
+  }
+  .shortlist-main { flex: 1; min-width: 220px; }
+  .shortlist-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .shortlist-symbol { font-family: var(--font-mono); font-weight: 700; font-size: 17px; }
+  .shortlist-rs { color: var(--muted); font-size: 14px; }
+  .shortlist-rs .mono { color: var(--text); }
+  .shortlist-why { color: var(--muted); font-size: 14px; }
+  .stance-reason { color: var(--muted); font-size: 13px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -65,6 +99,8 @@
   "CHOPPY": ("Market CHOPPY — no clear trend", "wait"),
 } %}
 {% set regime_info = regime_map.get(regime, (regime, "wait")) %}
+{% set regime_words = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", "CHOPPY": "choppy market"} %}
+{% set regime_phrase = regime_words.get(regime, (regime or "market").lower()) %}
 {% set nifty = indices.nifty %}
 
 <div class="regime-banner {{ regime_info[1] }}">
@@ -91,6 +127,36 @@
       {{ "%.1f"|format(nifty.breadth_pct) + "%" if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none else "—" }}
     </div>
   </div>
+</div>
+
+{% set shortlist = (screen_items | selectattr('passed') | list | sort(attribute='rs_rank', reverse=true))[:6] %}
+<div class="card shortlist-card">
+  <h2>Stocks to review today</h2>
+  {% if shortlist %}
+  {% for item in shortlist %}
+  <div class="shortlist-row">
+    <span class="shortlist-rank">{{ loop.index }}</span>
+    <div class="shortlist-main">
+      {% set stance_label = "NO SETUP" if item.stance == "AVOID / NO SETUP" else (item.stance or "—") %}
+      {% set stance_cls = "neutral" if item.stance == "AVOID / NO SETUP" else (item.stance_class or "neutral") %}
+      <div class="shortlist-top">
+        <a class="shortlist-symbol" href="/stock/{{ item.symbol }}">{{ item.symbol }}</a>
+        <span class="chip {{ stance_cls }}">{{ stance_label }}</span>
+        {% if item.passed and item.stance_class == "wait" %}
+        <span class="stance-reason">strong setup, {{ regime_phrase }}</span>
+        {% endif %}
+        <span class="shortlist-rs"><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">RS</span> <span class="mono">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span></span>
+      </div>
+      {% if item.stance_evidence %}
+      <div class="shortlist-why">{{ item.stance_evidence | join(' · ') }}</div>
+      {% endif %}
+    </div>
+    <a class="btn btn-ghost" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="empty-state">No setups passed the screen today — nothing to do is also a decision.</div>
+  {% endif %}
 </div>
 
 <div class="card briefing-card">
@@ -121,6 +187,32 @@
   {% endfor %}
   {% else %}
   <div class="empty-state">No new signals — nothing to do is also a decision.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Dad's Watchlist</h2>
+  {% if watchlist_rows %}
+  {% for row in watchlist_rows %}
+  {% set today_label = "NO SETUP" if row.stance_today == "AVOID / NO SETUP" else (row.stance_today or "—") %}
+  {% set today_cls = "neutral" if row.stance_today == "AVOID / NO SETUP" else (row.stance_today_class or "neutral") %}
+  {% set yesterday_label = "NO SETUP" if row.stance_yesterday == "AVOID / NO SETUP" else (row.stance_yesterday or "—") %}
+  <div class="watchlist-row">
+    <a class="watchlist-symbol" href="/stock/{{ row.symbol }}">{{ row.symbol }}</a>
+    <div class="watchlist-change">
+      {% if row.arrow == "—" %}
+      <span class="chip {{ today_cls }}">{{ today_label }}</span>
+      <span class="watchlist-nochange">— no change</span>
+      {% else %}
+      <span class="chip neutral">{{ yesterday_label }}</span>
+      <span class="watchlist-arrow {{ row.arrow_class }}">{{ row.arrow }}</span>
+      <span class="chip {{ today_cls }}">{{ today_label }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="empty-state">No stocks on the watchlist yet.</div>
   {% endif %}
 </div>
 

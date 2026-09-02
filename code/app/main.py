@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -39,6 +40,7 @@ ATR_STOP_MULTIPLIER = 1.5  # per the locked risk rule: stop-loss = 1.5x ATR from
 ROOT = Path(__file__).resolve().parent
 DATA_ROOT = ROOT.parent / "data"
 SNAPSHOT_DIR = DATA_ROOT / "snapshots"
+DB_PATH = DATA_ROOT / "papa.db"  # same file evaluator/memo.py's cache uses -- same Railway volume, persists across restarts
 STALE_AFTER = timedelta(hours=24)
 
 _TICKER_DIRECTORY_CACHE: Optional[List[Dict[str, str]]] = None
@@ -90,6 +92,141 @@ def _load_latest_snapshot() -> Dict[str, Any]:
         return json.load(handle)
 
 
+def _load_previous_snapshot() -> Optional[Dict[str, Any]]:
+    """The snapshot immediately before the latest one, for day-over-day
+    diffing. None if there isn't a second snapshot yet -- a fresh deploy or
+    a single pipeline run so far -- never an error."""
+    files = sorted(SNAPSHOT_DIR.glob("*.json"))
+    if len(files) < 2:
+        return None
+    try:
+        with open(files[-2], "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _diff_screen_items(today_items: List[Dict[str, Any]], previous_snapshot: Optional[Dict[str, Any]]) -> "tuple[Dict[str, Dict[str, Any]], List[str]]":
+    """symbol -> {"badge", "badge_class", "detail", "rs_delta"} for today's
+    rows, plus the list of symbols present yesterday but absent today
+    (DROPPED -- delisted, or fell out of the fetchable universe for a day).
+    No previous snapshot -> ({}, []), never an error.
+    """
+    if previous_snapshot is None:
+        return {}, []
+
+    prev_items = {i["symbol"]: i for i in previous_snapshot.get("screen", {}).get("items", [])}
+    today_symbols = {i["symbol"] for i in today_items}
+
+    diffs: Dict[str, Dict[str, Any]] = {}
+    for item in today_items:
+        sym = item["symbol"]
+        prev = prev_items.get(sym)
+
+        rs_delta = None
+        if prev and prev.get("rs_rank") is not None and item.get("rs_rank") is not None:
+            rs_delta = item["rs_rank"] - prev["rs_rank"]
+
+        if prev is None:
+            diffs[sym] = {"badge": "NEW", "badge_class": "good", "detail": None, "rs_delta": rs_delta}
+        elif item["conditions_passed"] > prev["conditions_passed"]:
+            diffs[sym] = {
+                "badge": "UPGRADED", "badge_class": "good",
+                "detail": f"{prev['conditions_passed']}/8→{item['conditions_passed']}/8",
+                "rs_delta": rs_delta,
+            }
+        elif item["conditions_passed"] < prev["conditions_passed"]:
+            diffs[sym] = {
+                "badge": "DOWNGRADED", "badge_class": "bad",
+                "detail": f"{prev['conditions_passed']}/8→{item['conditions_passed']}/8",
+                "rs_delta": rs_delta,
+            }
+        else:
+            diffs[sym] = {"badge": None, "badge_class": None, "detail": None, "rs_delta": rs_delta}
+
+    dropped = sorted(sym for sym in prev_items if sym not in today_symbols)
+    return diffs, dropped
+
+
+# Seed list for Dad's Watchlist -- edit this to change who's tracked. Only
+# used to populate the SQLite table on its very first run; after that,
+# storage is the source of truth so future growth (a picked stock added
+# later) survives restarts and isn't wiped by editing this constant.
+DEFAULT_WATCHLIST = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS"]
+
+# BULLISH SETUP > WATCH > AVOID / NO SETUP -- ordinal so yesterday->today
+# stance changes can be read as "better" or "worse", not just "different".
+_STANCE_RANK = {"AVOID / NO SETUP": 0, "WATCH": 1, "BULLISH SETUP": 2}
+
+
+def _init_watchlist_db() -> None:
+    """Creates the watchlist table if needed and seeds it from
+    DEFAULT_WATCHLIST exactly once -- only when the table is empty, so
+    edits/growth already in storage are never overwritten."""
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS watchlist (symbol TEXT PRIMARY KEY, added_at TEXT NOT NULL)")
+        (count,) = conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()
+        if count == 0:
+            now = datetime.now().isoformat()
+            conn.executemany(
+                "INSERT OR IGNORE INTO watchlist (symbol, added_at) VALUES (?, ?)",
+                [(sym, now) for sym in DEFAULT_WATCHLIST],
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def _get_watchlist_symbols() -> List[str]:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute("SELECT symbol FROM watchlist ORDER BY added_at").fetchall()
+    finally:
+        conn.close()
+    return [row[0] for row in rows]
+
+
+def _build_watchlist_section(
+    today_items: List[Dict[str, Any]], previous_snapshot: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Dad's watchlist: stored tickers (SQLite-backed, seeded from
+    DEFAULT_WATCHLIST) with each one's stance yesterday->today -- reuses the
+    exact same previous-snapshot lookup as the Minervini day-over-day diff.
+    """
+    today_by_symbol = {i["symbol"]: i for i in today_items}
+    prev_items = previous_snapshot.get("screen", {}).get("items", []) if previous_snapshot else []
+    prev_by_symbol = {i["symbol"]: i for i in prev_items}
+
+    rows: List[Dict[str, Any]] = []
+    for symbol in _get_watchlist_symbols():
+        today_item = today_by_symbol.get(symbol)
+        prev_item = prev_by_symbol.get(symbol)
+        stance_today = today_item.get("stance") if today_item else None
+        stance_yesterday = prev_item.get("stance") if prev_item else None
+
+        arrow, arrow_class = "—", "neutral"
+        rank_today = _STANCE_RANK.get(stance_today)
+        rank_yesterday = _STANCE_RANK.get(stance_yesterday)
+        if rank_today is not None and rank_yesterday is not None:
+            if rank_today > rank_yesterday:
+                arrow, arrow_class = "↑", "good"
+            elif rank_today < rank_yesterday:
+                arrow, arrow_class = "↓", "bad"
+
+        rows.append({
+            "symbol": symbol,
+            "in_screen": today_item is not None,
+            "stance_today": stance_today,
+            "stance_today_class": today_item.get("stance_class") if today_item else None,
+            "stance_yesterday": stance_yesterday,
+            "arrow": arrow,
+            "arrow_class": arrow_class,
+        })
+    return rows
+
+
 def _snapshot_is_stale(snapshot: Dict[str, Any]) -> bool:
     generated_at = snapshot.get("meta", {}).get("generated_at")
     if not generated_at:
@@ -99,6 +236,35 @@ def _snapshot_is_stale(snapshot: Dict[str, Any]) -> bool:
     except ValueError:
         return True
     return datetime.now() - generated > STALE_AFTER
+
+
+def _freshness_labels(snapshot: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Two readings of the one generated_at timestamp this pipeline actually
+    has -- 'market data' (is tonight's price data current) and 'analysis'
+    (how long ago the pipeline computed everything from it) happen
+    atomically together here, but showing them separately answers Papa's
+    real question -- "is the PRICE stale or is the VERDICT stale" -- instead
+    of one ambiguous blob.
+    """
+    generated_at = snapshot.get("meta", {}).get("generated_at")
+    if not generated_at:
+        return {"market_data_label": None, "analysis_age_label": None}
+    try:
+        generated = datetime.fromisoformat(generated_at)
+    except ValueError:
+        return {"market_data_label": None, "analysis_age_label": None}
+
+    delta = datetime.now() - generated
+    hours = delta.total_seconds() / 3600
+    if hours < 1:
+        age_label = f"{max(1, int(delta.total_seconds() / 60))}m old"
+    else:
+        age_label = f"{hours:.0f}h old"
+
+    return {
+        "market_data_label": "CURRENT" if delta <= STALE_AFTER else None,
+        "analysis_age_label": age_label,
+    }
 
 
 def _run_nightly_pipeline_sync() -> None:
@@ -153,6 +319,7 @@ def _enforce_auth_before_serving() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _enforce_auth_before_serving()
+    _init_watchlist_db()
 
     scheduler.add_job(
         _run_nightly_pipeline_job,
@@ -290,7 +457,8 @@ _REGIME_WORD = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", 
 _VERDICT_TO_STANCE = {
     "TRADE_VALID": ("BULLISH SETUP", "good"),
     "WAIT": ("WATCH", "wait"),
-    "AVOID": ("AVOID / NO SETUP", "bad"),
+    "AVOID": ("NO SETUP", "neutral"),
+    "NO_CLEAR_EDGE": ("NO CLEAR EDGE", "neutral"),
 }
 
 
@@ -327,9 +495,27 @@ def _compute_stockroom_stance(
     return {"stance": stance, "stance_class": stance_class, "stance_evidence": evidence[:3]}
 
 
+def _setup_quality(score: Optional[int]) -> Dict[str, Optional[str]]:
+    """Reframes the bare 0-100 memo score as a quality word -- STRONG/MODERATE/
+    WEAK are about how clean the setup itself is, not a probability of profit
+    (that distinction matters enough to print on the page, not just imply).
+    Reuses the same 60/80 boundaries already drawn on the score gauge.
+    """
+    if score is None:
+        return {"word": None, "class": None}
+    if score >= 80:
+        return {"word": "STRONG", "class": "good"}
+    if score >= 60:
+        return {"word": "MODERATE", "class": "wait"}
+    return {"word": "WEAK", "class": "bad"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request) -> HTMLResponse:
     snapshot = _load_latest_snapshot()
+    watchlist_rows = _build_watchlist_section(
+        snapshot.get("screen", {}).get("items", []), _load_previous_snapshot(),
+    )
     return TEMPLATES.TemplateResponse(
         request,
         "index.html",
@@ -338,9 +524,12 @@ async def home(request: Request) -> HTMLResponse:
             "indices": snapshot.get("indices", {}),
             "briefing": snapshot.get("briefing", {}).get("items", []),
             "action_queue": snapshot.get("action_queue", []),
+            "screen_items": snapshot.get("screen", {}).get("items", []),
+            "watchlist_rows": watchlist_rows,
             "generated_at": snapshot.get("meta", {}).get("generated_at"),
             "stale": _snapshot_is_stale(snapshot),
             "active_tab": "today",
+            **_freshness_labels(snapshot),
         },
     )
 
@@ -356,6 +545,7 @@ async def stock_room(asset: str, request: Request) -> HTMLResponse:
         "generated_at": snapshot.get("meta", {}).get("generated_at"),
         "stale": _snapshot_is_stale(snapshot),
         "active_tab": "stock",
+        **_freshness_labels(snapshot),
     }
 
     if df.empty:
@@ -379,6 +569,8 @@ async def stock_room(asset: str, request: Request) -> HTMLResponse:
                 "stance": None,
                 "stance_class": None,
                 "stance_evidence": [],
+                "quality_word": None,
+                "quality_class": None,
             },
         )
 
@@ -403,6 +595,7 @@ async def stock_room(asset: str, request: Request) -> HTMLResponse:
     )
     memo = generate_memo(bundle, asset, snapshot_date="today")
     stance = _compute_stockroom_stance(memo, screen_item, regime, signal)
+    quality = _setup_quality(memo.get("score") if memo.get("reasoning") != "Analysis unavailable" else None)
     return TEMPLATES.TemplateResponse(
         request,
         "stock_room.html",
@@ -420,6 +613,8 @@ async def stock_room(asset: str, request: Request) -> HTMLResponse:
             "stance": stance["stance"],
             "stance_class": stance["stance_class"],
             "stance_evidence": stance["stance_evidence"],
+            "quality_word": quality["word"],
+            "quality_class": quality["class"],
         },
     )
 
@@ -429,14 +624,19 @@ async def minervini_screen(request: Request) -> HTMLResponse:
     snapshot = _load_latest_snapshot()
     items = snapshot.get("screen", {}).get("items", [])
     generated_at = snapshot.get("meta", {}).get("generated_at")
+    diffs, dropped = _diff_screen_items(items, _load_previous_snapshot())
     return TEMPLATES.TemplateResponse(
         request,
         "screen.html",
         {
             "items": items,
+            "diffs": diffs,
+            "dropped": dropped,
             "generated_at": generated_at,
             "stale": _snapshot_is_stale(snapshot),
             "active_tab": "screen",
+            "regime": snapshot.get("regime", "CHOPPY"),
+            **_freshness_labels(snapshot),
         },
     )
 
@@ -454,6 +654,7 @@ async def spread_trades(request: Request) -> HTMLResponse:
             "generated_at": snapshot.get("meta", {}).get("generated_at"),
             "stale": _snapshot_is_stale(snapshot),
             "active_tab": "pairs",
+            **_freshness_labels(snapshot),
         },
     )
 
@@ -468,6 +669,7 @@ async def diary(request: Request) -> HTMLResponse:
             "generated_at": snapshot.get("meta", {}).get("generated_at"),
             "stale": _snapshot_is_stale(snapshot),
             "active_tab": "diary",
+            **_freshness_labels(snapshot),
         },
     )
 

@@ -54,7 +54,7 @@
     <div>
       <div class="gauge-box">
         <div id="gauge-{{ loop.index }}" style="width: 340px; height: 210px; margin: 0 auto;"></div>
-        <div class="zscore-big"><span class="term" title="How stretched the rubber band is; ±2 = fully stretched, time to consider a trade.">z-score</span> {{ "%.2f"|format(item.zscore) }} &middot; 60d window</div>
+        <div class="zscore-big"><span class="term" title="The spread is unusually far from its normal relationship between these two stocks; ±2 = fully stretched, time to consider a trade.">z-score</span> {{ "%.2f"|format(item.zscore) }} &middot; 60d window</div>
       </div>
       <div class="trade-line">
         <div class="lbl"><span class="term" title="Buy/sell these share quantities to hold the pair market-neutral, based on the current hedge ratio.">Trade size</span></div>

@@ -9,6 +9,12 @@
   .summary-stat .num { font-size: 26px; font-weight: 700; }
   .summary-stat .label { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
 
+  /* day-over-day diff badges + RS delta */
+  .diff-badge { font-size: 12px; padding: 3px 9px; margin-left: 8px; vertical-align: middle; }
+  .rs-delta { font-family: var(--font-mono); font-size: 13px; font-weight: 700; margin-left: 6px; }
+  .rs-delta.up { color: var(--green); }
+  .rs-delta.down { color: var(--red); }
+
   .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
   table { width: 100%; border-collapse: collapse; }
   thead th {
@@ -32,7 +38,10 @@
   }
   .symbol-cell { font-family: var(--font-mono); font-weight: 700; font-size: 17px; display: flex; align-items: center; gap: 10px; }
   .chevron { font-size: 15px; }
-  .row-link { font-size: 14px; text-decoration: none; white-space: nowrap; justify-self: end; }
+  .row-link {
+    font-size: 14px; text-decoration: none; white-space: nowrap; justify-self: end;
+    padding: 14px 4px; margin: -14px -4px; /* comfortable Android tap target without disturbing row layout */
+  }
   .row-link:hover { text-decoration: underline; }
 
   .rs-badge {
@@ -45,6 +54,9 @@
   .rs-badge.pass   { background: transparent; border-color: var(--green); color: var(--green); }
 
   .conditions-cell { color: var(--muted); font-family: var(--font-mono); font-size: 15px; }
+
+  .stance-cell { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+  .stance-reason { color: var(--muted); font-size: 12px; line-height: 1.3; }
 
   .row-expand-cell { padding: 0 16px 22px 16px; }
   .row-expand-inner { padding: 18px 20px; background: var(--surface-2); border-radius: 10px; border: 1px solid var(--border); }
@@ -73,10 +85,34 @@
   .vcp-section { margin-top: 28px; }
   .vcp-label { color: var(--muted); font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
 
+  /* In-page filter -- deliberately NOT styled like the nav search (no
+     blue focus ring, pill shape, inline label) so it reads as "narrows
+     this table" rather than "go somewhere else". */
+  .filter-box {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 6px 8px 6px 20px;
+    margin-bottom: 20px;
+  }
+  .filter-label { color: var(--muted); font-size: 15px; white-space: nowrap; font-weight: 600; }
+  .filter-box input[type="text"] {
+    flex: 1; min-width: 160px;
+    background: transparent; border: none; color: var(--text);
+    font-family: var(--font-sans); font-size: 17px; padding: 10px 6px; outline: none;
+  }
+  .filter-box input[type="text"]::placeholder { color: var(--muted-2); }
+  .filter-count {
+    color: var(--muted); font-size: 14px; white-space: nowrap;
+    background: var(--surface); border-radius: 999px; padding: 8px 14px;
+  }
+
   @media (max-width: 720px) {
     .row-summary summary { grid-template-columns: 32px 1fr 70px; }
     .conditions-cell { display: none; }
     .row-link { display: none; }
+    .filter-label { display: none; }
   }
 </style>
 {% endblock %}
@@ -94,29 +130,69 @@
     <div class="num mono word-good">{{ passed_items | length }}</div>
     <div class="label">Stage 2 (8/8)</div>
   </div>
+  {% if dropped %}
+  <div class="summary-stat">
+    <div class="num mono word-bad" title="{{ dropped | join(', ') }}">{{ dropped | length }}</div>
+    <div class="label">Dropped since yesterday</div>
+  </div>
+  {% endif %}
 </div>
 
+<div class="filter-box">
+  <label for="minervini-filter" class="filter-label">Filter this list</label>
+  <input id="minervini-filter" type="text" autocomplete="off" placeholder="Symbol or company name&hellip;" aria-label="Filter the table below by symbol or company name" />
+  <span id="minervini-filter-count" class="filter-count">Showing all {{ items | length }}</span>
+</div>
+
+{% set condition_why = {
+  "price_above_sma150_sma200": "Confirms the stock trades above its medium- and long-term averages -- a basic sign the uptrend is intact, not just a short bounce.",
+  "sma150_above_sma200": "The medium-term average has overtaken the long-term one -- momentum is building, not fading.",
+  "sma200_trending_up": "The long-term average itself is rising, not flat or falling -- the base trend is genuinely up.",
+  "sma50_above_sma150_sma200": "All three averages are stacked short-above-medium-above-long -- the textbook Stage-2 alignment.",
+  "price_above_sma50": "Price is holding above its short-term average -- near-term strength, not just riding old momentum.",
+  "price_30pct_above_52wk_low": "Enough distance from the bottom to show this isn't a stock still basing or recovering from a crash.",
+  "price_within_25pct_of_52wk_high": "Close enough to its high to be a market leader, not a laggard limping along.",
+  "rs_rank_70_plus": "Outperformed most of the NIFTY 500 over the last 3/6/9/12 months -- genuine relative strength, not just moving with the market.",
+} %}
+{% set regime_words = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", "CHOPPY": "choppy market"} %}
+{% set regime_phrase = regime_words.get(regime, (regime or "market").lower()) %}
 <div class="table-wrap">
 <table>
   <thead>
     <tr>
       <th class="row-num">#</th>
       <th>Stock</th>
-      <th><span class="term" title="Relative Strength rank: how this stock's price momentum compares to the rest of the market, 0-99. Higher is stronger.">RS Rank</span></th>
+      <th><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99. Higher is stronger.">RS Rank</span></th>
       <th>Status</th>
       <th>Conditions</th>
     </tr>
   </thead>
   <tbody>
     {% for item in items %}
-    <tr class="data-row">
+    {% set d = diffs.get(item.symbol) if diffs else none %}
+    <tr class="data-row" data-symbol="{{ item.symbol }}">
       <td colspan="5" class="row-summary">
         <details class="row-details">
           <summary>
             <span class="row-num mono">{{ loop.index }}</span>
-            <span class="symbol-cell"><span class="chevron">&#9656;</span>{{ item.symbol }}</span>
-            <span class="rs-badge {{ 'strong' if item.rs_rank is not none and item.rs_rank >= 90 else ('pass' if item.rs_rank is not none and item.rs_rank >= 70 else '') }}">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span>
-            <span class="chip {{ item.stance_class or 'neutral' }}">{{ item.stance or "—" }}</span>
+            <span class="symbol-cell">
+              <span class="chevron">&#9656;</span>{{ item.symbol }}
+              {% if d and d.badge %}
+              <span class="chip {{ d.badge_class }} diff-badge" title="{{ d.detail if d.detail else 'New in this screen since yesterday' }}">{{ d.badge }}{% if d.detail %} {{ d.detail }}{% endif %}</span>
+              {% endif %}
+              {% if d and d.rs_delta and d.rs_delta != 0 %}
+              <span class="rs-delta {{ 'up' if d.rs_delta > 0 else 'down' }}">{{ "↑" if d.rs_delta > 0 else "↓" }}{{ d.rs_delta | abs }}</span>
+              {% endif %}
+            </span>
+            <span class="rs-badge {{ 'strong' if item.rs_rank is not none and item.rs_rank >= 90 else ('pass' if item.rs_rank is not none and item.rs_rank >= 70 else '') }}" title="RS rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span>
+            {% set stance_label = "NO SETUP" if item.stance == "AVOID / NO SETUP" else (item.stance or "—") %}
+            {% set stance_cls = "neutral" if item.stance == "AVOID / NO SETUP" else (item.stance_class or "neutral") %}
+            <span class="stance-cell">
+              <span class="chip {{ stance_cls }}">{{ stance_label }}</span>
+              {% if item.passed and item.stance_class == "wait" %}
+              <span class="stance-reason">strong setup, {{ regime_phrase }}</span>
+              {% endif %}
+            </span>
             <span class="conditions-cell">{{ item.conditions_passed }} / 8</span>
             <a class="row-link" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
           </summary>
@@ -135,7 +211,7 @@
               <div class="check-row {{ 'pass' if c.passed else 'fail' }}">
                 <span class="check-badge">{{ "✓" if c.passed else "✗" }}</span>
                 <div>
-                  <div class="check-label">{{ c.label }}</div>
+                  <div class="check-label"><span class="term" title="{{ condition_why.get(c.condition, c.label) }}">{{ c.label }}</span></div>
                   <div class="check-detail">{{ c.detail }}</div>
                 </div>
               </div>
@@ -158,4 +234,35 @@
   <div class="vcp-label">algorithm-detected — verify on chart</div>
   <div class="empty-state">No VCP setups flagged yet — this screen is still being built out.</div>
 </div>
+
+{% if items %}
+<script>
+  // Filters the table already on the page -- no navigation, no network call.
+  // Distinct from the nav search (which always goes to Stock Room).
+  document.addEventListener('DOMContentLoaded', function () {
+    const filterInput = document.getElementById('minervini-filter');
+    const countLabel = document.getElementById('minervini-filter-count');
+    if (!filterInput) return;
+
+    const rows = Array.from(document.querySelectorAll('.data-row'));
+    const nameBySymbol = {};
+    (typeof PAPA_TICKER_DIRECTORY !== 'undefined' ? PAPA_TICKER_DIRECTORY : []).forEach(function (t) {
+      nameBySymbol[t.symbol] = t.name;
+    });
+
+    filterInput.addEventListener('input', function () {
+      const q = filterInput.value.trim().toUpperCase();
+      let shown = 0;
+      rows.forEach(function (row) {
+        const symbol = row.getAttribute('data-symbol') || '';
+        const name = (nameBySymbol[symbol] || '').toUpperCase();
+        const match = !q || symbol.includes(q) || name.includes(q);
+        row.style.display = match ? '' : 'none';
+        if (match) shown++;
+      });
+      countLabel.textContent = q ? ('Showing ' + shown + ' of ' + rows.length) : ('Showing all ' + rows.length);
+    });
+  });
+</script>
+{% endif %}
 {% endblock %}

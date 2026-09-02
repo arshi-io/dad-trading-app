@@ -229,14 +229,19 @@ def generate_memo(bundle: Dict[str, Any], ticker: str, snapshot_date: Optional[s
     prompt = (
         "You are scoring a trade setup for a seasoned NSE trader who reads Minervini. "
         "Return strict JSON only. "
-        "Schema: {\"score\": 0-100, \"verdict\": \"TRADE_VALID\"|\"WAIT\"|\"AVOID\", \"reasoning\": \"120-180 words, plain trader English\", \"risk_flags\": [\"...\"]}. "
+        "Schema: {\"score\": 0-100, \"verdict\": \"TRADE_VALID\"|\"WAIT\"|\"AVOID\"|\"NO_CLEAR_EDGE\", "
+        "\"reasoning\": \"120-180 words, plain trader English\", \"risk_flags\": [\"...\"], "
+        "\"invalidation\": [\"3-4 concrete conditions\"]}. "
         "Bundle field meanings -- trend_template: this ticker's Minervini 8-point Stage-2 checklist result and RS rank (0-99) from tonight's screen, null if not in the NIFTY 500 screen universe. "
         "market_regime: overall NIFTY regime (TRENDING_UP/CHOPPY/TRENDING_DOWN), null if unavailable. "
         "signal: the mean-reversion z-score signal for this ticker. "
         "delivery_pct: NSE delivery percentage, null if not available -- never invent a number for it. "
         "matched_headlines: recent news matched to this ticker; treat unmatched/generic market headlines as weak, not company-specific, evidence. "
         "Weigh trend_template + market_regime + signal as the primary evidence; headlines and diary are supporting context only. "
-        "Do not invent facts; cite only the provided inputs, and say plainly when a field is null/empty rather than working around it. If score < 60, verdict must be AVOID. "
+        "Do not invent facts; cite only the provided inputs, and say plainly when a field is null/empty rather than working around it. "
+        "If score < 60, verdict must be AVOID or NO_CLEAR_EDGE -- never TRADE_VALID or WAIT. "
+        "Use NO_CLEAR_EDGE instead of forcing AVOID when the evidence is genuinely mixed or too thin to take a directional view either way (e.g. trend_template and signal disagree, or most fields are null) -- it is a valid abstention, not a synonym for AVOID. "
+        "invalidation: 3-4 short bullets naming the SPECIFIC numeric levels already present in trend_template/signal/market_regime that would flip this call if breached -- e.g. \"Close below the 50-day SMA (use the exact SMA50 value from trend_template)\", \"RS rank falls below 70\", \"200-day SMA turns down\", \"Regime shifts to TRENDING_DOWN\". Use the real numbers from the bundle, never placeholders. "
         f"Bundle: {json.dumps(prompt_bundle)}"
     )
     raw_text = _call_llm(prompt)
@@ -254,6 +259,7 @@ def generate_memo(bundle: Dict[str, Any], ticker: str, snapshot_date: Optional[s
                 "verdict": "AVOID",
                 "reasoning": "Analysis unavailable",
                 "risk_flags": [],
+                "invalidation": [],
             }
 
     payload = {
@@ -263,10 +269,14 @@ def generate_memo(bundle: Dict[str, Any], ticker: str, snapshot_date: Optional[s
         "verdict": parsed.get("verdict", "AVOID"),
         "reasoning": parsed.get("reasoning", "Analysis unavailable"),
         "risk_flags": parsed.get("risk_flags", []),
+        "invalidation": parsed.get("invalidation", []),
         "model_provider": config.MODEL_PROVIDER,
         "generated_at": datetime.utcnow().isoformat(),
     }
-    if payload["score"] < 60:
+    # "below 60 = no trade" -- AVOID and NO_CLEAR_EDGE both already satisfy
+    # that (an abstention IS a no-trade outcome), only force-correct a
+    # verdict that wrongly stayed TRADE_VALID/WAIT under a low score.
+    if payload["score"] < 60 and payload["verdict"] not in ("AVOID", "NO_CLEAR_EDGE"):
         payload["verdict"] = "AVOID"
     _store_cached_memo(ticker, snapshot_date, payload)
     return payload
