@@ -14,6 +14,8 @@ statsmodels==0.14.6
 arch==8.0.0
 APScheduler==3.11.3
 tzdata==2026.3
+python-multipart==0.0.32
+bcrypt==5.0.0
 
 # Test
 pytest==9.1.1

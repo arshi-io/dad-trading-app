@@ -55,10 +55,20 @@
          other to auto), clipping the search dropdown below it. Only the
          tab strip scrolls; the dropdown lives outside that clipped box. */
     }
+    /* Desktop: these wrappers are invisible to layout (display:contents) so
+       brand/tabs/search/logout are direct flex children of <nav>, exactly
+       as before the hamburger existed. Mobile overrides give them real
+       boxes -- see the max-width:600px block. */
+    .nav-bar { display: contents; }
+    .nav-menu { display: contents; }
+    .menu-toggle { display: none; }
+
     .nav-tabs {
       display: flex; align-items: center;
       overflow-x: auto;
       min-width: 0;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
     }
     .brand {
       display: flex; align-items: center; gap: 8px;
@@ -109,6 +119,11 @@
     .nav-search input[type="text"]::placeholder { color: var(--muted-2); }
     .nav-search input[type="text"]:focus { border-color: var(--blue); }
     .nav-search .btn-ghost { padding: 9px 16px; font-size: 15px; white-space: nowrap; }
+    .logout-link {
+      color: var(--muted); font-size: 15px; text-decoration: none;
+      margin-left: 14px; padding: 9px 4px; white-space: nowrap; flex-shrink: 0;
+    }
+    .logout-link:hover { color: var(--text); text-decoration: underline; }
 
     /* Stock Room's own top-of-page search -- full content-size, per papa-ux 18px+ */
     .stock-search { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -150,6 +165,7 @@
     .typeahead-item:last-child { border-bottom: none; }
     .typeahead-item:hover, .typeahead-item.active { background: var(--border); }
     .ta-symbol { font-family: var(--font-mono); font-weight: 700; color: var(--text); white-space: nowrap; }
+    .ta-fallback .ta-name { color: var(--blue); white-space: normal; overflow: visible; font-weight: 600; }
     .ta-name { color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     main { padding: 24px; max-width: 1160px; margin: 0 auto; }
@@ -255,36 +271,120 @@
     @media (max-width: 900px) {
       .nav-search input[type="text"] { width: 140px; }
     }
-    @media (max-width: 720px) {
+
+    /* ============ MOBILE (<=600px): real device widths, 375-430px ============ */
+    @media (max-width: 600px) {
+      html { font-size: 16px; }
+      body { font-size: 16px; }
       main { padding: 16px; }
-      h1 { font-size: 26px; }
-      nav { flex-wrap: wrap; padding: 10px 16px; }
-      .nav-tabs { width: 100%; }
-      .nav-search { width: 100%; margin: 6px 0 10px 0; padding-left: 0; }
-      .nav-search input[type="text"] { width: 100%; }
+      h1 { font-size: 24px; }
+      h2 { font-size: 20px; }
+      h3 { font-size: 17px; }
+
+      /* ---- hamburger nav ---- */
+      nav { flex-wrap: wrap; align-items: stretch; padding: 0; }
+      .nav-bar {
+        display: flex; align-items: center; justify-content: space-between;
+        width: 100%; padding: 10px 16px; min-height: var(--nav-height);
+      }
+      .brand { border-right: none; padding-right: 0; margin-right: 0; font-size: 15px; }
+      .menu-toggle {
+        display: flex; align-items: center; justify-content: center;
+        width: 44px; height: 44px; flex-shrink: 0;
+        background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 8px;
+        color: var(--text); font-size: 22px; line-height: 1; cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .menu-toggle:active { background: var(--border-strong); }
+
+      .nav-menu {
+        display: none;
+        width: 100%; padding: 6px 16px 16px 16px;
+        border-top: 1px solid var(--border);
+      }
+      nav.menu-open .nav-menu { display: block; }
+
+      .nav-tabs {
+        display: flex; flex-direction: column; align-items: stretch;
+        overflow-x: visible; gap: 4px; margin-bottom: 14px;
+      }
+      nav a.tab {
+        height: auto; min-height: 48px;
+        padding: 13px 16px;
+        border-bottom: none; border-left: 3px solid transparent;
+        border-radius: 8px; background: var(--surface-2);
+        font-size: 17px;
+      }
+      nav a.tab.active { border-left-color: var(--blue); background: var(--blue-dim); }
+      nav a.tab:not(.active):active { background: var(--border-strong); }
+
+      .nav-search {
+        width: 100%; margin: 0 0 14px 0; padding-left: 0;
+        flex-direction: column; align-items: stretch; gap: 10px;
+      }
+      .nav-search input[type="text"] { width: 100%; min-height: 48px; font-size: 16px; }
+      .nav-search .btn-ghost { width: 100%; min-height: 48px; font-size: 16px; }
+
+      .logout-link {
+        display: block; width: 100%; text-align: center;
+        min-height: 48px; padding: 13px 4px; margin: 0;
+        border-top: 1px solid var(--border); border-radius: 8px;
+        font-size: 16px;
+      }
+
+      /* ---- general mobile text floor + breathing room ---- */
+      .chip { font-size: 16px; }
+      .card { padding: 20px; margin-bottom: 16px; }
+      .btn, .btn-ghost { min-height: 48px; font-size: 16px; }
+      a, button, input, select, summary { font-size: max(16px, 1em); }
     }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
 <body>
-  <nav>
-    <div class="nav-tabs">
+  <nav id="site-nav">
+    <div class="nav-bar">
       <span class="brand"><span class="dot"></span>PAPA TERMINAL</span>
-      <a href="/" class="tab {{ 'active' if active_tab == 'today' else '' }}">Today</a>
-      <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Minervini Screen</a>
-      <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Spread Trades</a>
-      <a href="/stock/RELIANCE.NS" class="tab {{ 'active' if active_tab == 'stock' else '' }}">Stock Room</a>
-      <a href="/diary" class="tab {{ 'active' if active_tab == 'diary' else '' }}">Diary</a>
+      <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-menu">
+        <span aria-hidden="true">&#9776;</span>
+      </button>
     </div>
-    <form class="nav-search" onsubmit="event.preventDefault(); papaGoToTicker(document.getElementById('nav-ticker-input').value);">
-      <div class="typeahead-wrap">
-        <input id="nav-ticker-input" type="text" autocomplete="off"
-               placeholder="Search any NSE stock&hellip;" aria-label="Search any NSE stock" />
-        <div id="nav-ticker-dropdown" class="typeahead-dropdown" role="listbox" hidden></div>
+    <div class="nav-menu" id="nav-menu">
+      <div class="nav-tabs">
+        <a href="/" class="tab {{ 'active' if active_tab == 'today' else '' }}">Today</a>
+        <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Minervini Screen</a>
+        <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Spread Trades</a>
+        <a href="/stock/RELIANCE.NS" class="tab {{ 'active' if active_tab == 'stock' else '' }}">Stock Room</a>
+        <a href="/predictions" class="tab {{ 'active' if active_tab == 'predictions' else '' }}">Trade Predictions</a>
       </div>
-      <button type="submit" class="btn-ghost">Go</button>
-    </form>
+      <form class="nav-search" onsubmit="event.preventDefault(); papaGoToTicker(document.getElementById('nav-ticker-input').value);">
+        <div class="typeahead-wrap">
+          <input id="nav-ticker-input" type="text" autocomplete="off"
+                 placeholder="Search any NSE stock&hellip;" aria-label="Search any NSE stock" />
+          <div id="nav-ticker-dropdown" class="typeahead-dropdown" role="listbox" hidden></div>
+        </div>
+        <button type="submit" class="btn-ghost">Go</button>
+      </form>
+      <a href="/logout" class="logout-link">Logout</a>
+    </div>
   </nav>
+  <script>
+    (function () {
+      const toggle = document.getElementById('menu-toggle');
+      const nav = document.getElementById('site-nav');
+      if (!toggle || !nav) return;
+      toggle.addEventListener('click', function () {
+        const isOpen = nav.classList.toggle('menu-open');
+        toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      });
+      document.addEventListener('click', function (e) {
+        if (nav.classList.contains('menu-open') && !nav.contains(e.target)) {
+          nav.classList.remove('menu-open');
+          toggle.setAttribute('aria-expanded', 'false');
+        }
+      });
+    })();
+  </script>
   <main>
     <div class="status-bar">
       <span class="status-dot {{ 'stale' if stale else '' }}"></span>
@@ -333,25 +433,41 @@
 
       let matches = [];
       let activeIndex = -1;
+      let query = '';
+      // A NIFTY-500 miss is NOT "not found" -- Stock Room fetches any live
+      // NSE ticker on demand (see stock_room() in main.py). Without this,
+      // an empty dropdown for e.g. KRBL/RISHABH (real NSE stocks, just
+      // outside the 500-name screen universe) reads as "search found
+      // nothing" even though pressing Go/Enter already works -- this row
+      // makes that path visible instead of relying on it being guessed.
+      const FALLBACK = { fallback: true };
 
       function render() {
         dropdown.innerHTML = '';
-        if (matches.length === 0) { dropdown.hidden = true; return; }
-        matches.forEach((m, i) => {
+        if (matches.length === 0 && !query) { dropdown.hidden = true; return; }
+        const rows = matches.length ? matches : [FALLBACK];
+        rows.forEach((m, i) => {
           const row = document.createElement('div');
-          row.className = 'typeahead-item' + (i === activeIndex ? ' active' : '');
+          row.className = 'typeahead-item' + (i === activeIndex ? ' active' : '') + (m.fallback ? ' ta-fallback' : '');
           row.setAttribute('role', 'option');
 
-          const symSpan = document.createElement('span');
-          symSpan.className = 'ta-symbol';
-          symSpan.textContent = m.symbol.replace('.NS', '');
+          if (m.fallback) {
+            const label = document.createElement('span');
+            label.className = 'ta-name';
+            label.textContent = 'Not in the NIFTY 500 list — look up "' + query + '" directly →';
+            row.appendChild(label);
+          } else {
+            const symSpan = document.createElement('span');
+            symSpan.className = 'ta-symbol';
+            symSpan.textContent = m.symbol.replace('.NS', '');
 
-          const nameSpan = document.createElement('span');
-          nameSpan.className = 'ta-name';
-          nameSpan.textContent = m.name;
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'ta-name';
+            nameSpan.textContent = m.name;
 
-          row.appendChild(symSpan);
-          row.appendChild(nameSpan);
+            row.appendChild(symSpan);
+            row.appendChild(nameSpan);
+          }
           row.addEventListener('mousedown', (e) => { e.preventDefault(); select(m); });
           dropdown.appendChild(row);
         });
@@ -359,13 +475,15 @@
       }
 
       function select(m) {
-        input.value = m.symbol;
         dropdown.hidden = true;
+        if (m.fallback) { papaGoToTicker(query); return; }
+        input.value = m.symbol;
         papaGoToTicker(m.symbol);
       }
 
       function filterNow() {
         const q = input.value.trim().toUpperCase();
+        query = q;
         activeIndex = -1;
         if (!q) { matches = []; render(); return; }
         const starts = [];
@@ -381,10 +499,11 @@
 
       input.addEventListener('input', filterNow);
       input.addEventListener('keydown', (e) => {
-        if (dropdown.hidden || matches.length === 0) return;
-        if (e.key === 'ArrowDown') { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, matches.length - 1); render(); }
+        if (dropdown.hidden) return;
+        const rows = matches.length ? matches : [FALLBACK];
+        if (e.key === 'ArrowDown') { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, rows.length - 1); render(); }
         else if (e.key === 'ArrowUp') { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); render(); }
-        else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); select(matches[activeIndex]); }
+        else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); select(rows[activeIndex]); }
         else if (e.key === 'Escape') { dropdown.hidden = true; }
       });
       input.addEventListener('blur', () => { setTimeout(() => { dropdown.hidden = true; }, 150); });

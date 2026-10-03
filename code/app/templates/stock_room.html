@@ -8,6 +8,17 @@
   .ticker-stats { display: flex; gap: 22px; flex-wrap: wrap; color: var(--muted); font-size: 15px; }
   .ticker-stats .mono { color: var(--text); }
   .chart-card { padding-top: 18px; }
+  .chart-legend {
+    display: flex; flex-wrap: wrap; gap: 8px 18px;
+    margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: var(--muted); }
+  .legend-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .legend-swatch.legend-line { width: 16px; height: 3px; border-radius: 2px; }
+  .legend-swatch.legend-bar {
+    width: 10px; height: 12px; border-radius: 2px;
+    background: linear-gradient(to bottom, #22C55E 50%, #EF4444 50%);
+  }
   #chart { height: 460px; }
 
   .grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px; }
@@ -55,6 +66,15 @@
   .risk-line .k { color: var(--muted); }
   .risk-line .v { font-family: var(--font-mono); }
   .risk-line .v.dim { color: var(--muted); font-family: var(--font-sans); font-style: italic; font-size: 15px; }
+  /* Deliberate "nothing to show here" states -- upright and quiet, not the
+     grey italic that reads like a failed lookup. */
+  .risk-line .v.note { color: var(--muted); font-family: var(--font-sans); font-style: normal; font-size: 15px; text-align: right; }
+  .signal-label { color: var(--muted); font-size: 15px; }
+  .live-eval-note {
+    color: var(--muted); font-size: 15px; line-height: 1.5;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+  }
 
   .headline-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
   .headline-row:last-child { border-bottom: none; padding-bottom: 0; }
@@ -63,6 +83,53 @@
   .headline-meta { color: var(--muted); font-size: 14px; }
   .headline-meta .src { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 5px; padding: 1px 8px; margin-right: 8px; font-size: 13px; }
   .not-found-card { text-align: center; padding: 48px 24px; }
+
+  @media (max-width: 600px) {
+    .ticker-stats, .why-text, .risk-line .v.dim, .risk-line .v.note,
+    .headline-meta, .meta-item, .check-detail, .setup-quality-caption,
+    .verdict-rule, .legend-item, .signal-label, .live-eval-note {
+      font-size: 16px;
+    }
+    /* Label above value instead of squeezed side-by-side -- "You size this
+       yourself" next to "Position size" wraps to a cramped two-word column
+       on a 390px screen. */
+    .risk-line { flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 0; }
+    .risk-line .v, .risk-line .v.note, .risk-line .v.dim { text-align: left; }
+    .chart-legend { gap: 8px 14px; }
+    #chart { height: 320px; }
+    .verdict-top { gap: 14px; }
+    .watchlist-form { margin-left: 0; width: 100%; }
+    .watchlist-form .btn { width: 100%; justify-content: center; }
+  }
+
+  .stock-meta-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+  .meta-item { color: var(--muted); font-size: 15px; }
+  .meta-item strong { color: var(--text); }
+  .rs-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 42px; padding: 4px 9px;
+    border-radius: 7px; font-family: var(--font-mono); font-weight: 700; font-size: 15px;
+    border: 1px solid var(--border-strong); color: var(--muted);
+  }
+  .rs-badge.strong { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .rs-badge.pass   { background: transparent; border-color: var(--green); color: var(--green); }
+  .watchlist-form { margin-left: auto; }
+
+  .scorecard { display: flex; gap: 4px; margin-bottom: 18px; }
+  .scorecard-seg { flex: 1; height: 8px; border-radius: 4px; background: var(--border-strong); }
+  .scorecard-seg.on { background: var(--green); }
+  .check-row { display: flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  .check-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .check-row:first-child { padding-top: 0; }
+  .check-badge {
+    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 14px; margin-top: 1px;
+  }
+  .check-row.pass .check-badge { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+  .check-row.fail .check-badge { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+  .check-label { font-weight: 600; }
+  .check-detail { color: var(--muted); font-size: 15px; font-family: var(--font-mono); margin-top: 3px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -107,19 +174,80 @@
   {% endif %}
 </div>
 
+{% set regime_words = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", "CHOPPY": "choppy market"} %}
+<div class="stock-meta-row">
+  {% if screen_item %}
+  <span class="meta-item"><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">RS</span> <span class="rs-badge {{ 'strong' if screen_item.rs_rank is not none and screen_item.rs_rank >= 90 else ('pass' if screen_item.rs_rank is not none and screen_item.rs_rank >= 70 else '') }}">{{ screen_item.rs_rank if screen_item.rs_rank is not none else "—" }}</span></span>
+  {% set stance_label = "NO SETUP" if screen_item.stance == "AVOID / NO SETUP" else (screen_item.stance or "—") %}
+  {% set stance_cls = "neutral" if screen_item.stance == "AVOID / NO SETUP" else (screen_item.stance_class or "neutral") %}
+  <span class="chip {{ stance_cls }}">{{ stance_label }}</span>
+  {% endif %}
+  {% if regime %}
+  <span class="meta-item">Regime <strong>{{ regime_words.get(regime, (regime or "").lower()) }}</strong></span>
+  {% endif %}
+  <form method="post" action="/api/watchlist/{{ 'remove' if in_watchlist else 'add' }}" class="watchlist-form">
+    <input type="hidden" name="symbol" value="{{ asset }}">
+    <input type="hidden" name="next" value="/stock/{{ asset }}">
+    <button type="submit" class="btn {{ 'btn-ghost' if in_watchlist else '' }}">{{ '− Remove from Watchlist' if in_watchlist else '+ Add to Watchlist' }}</button>
+  </form>
+</div>
+
 <div class="card chart-card">
+  <div class="chart-legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:#22C55E;"></span>Up day</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#EF4444;"></span>Down day</span>
+    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#3B82F6;"></span>50 DMA</span>
+    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#F59E0B;"></span>150 DMA</span>
+    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#EF4444;"></span>200 DMA</span>
+    <span class="legend-item"><span class="legend-swatch legend-bar"></span>Volume</span>
+  </div>
   <div id="chart"></div>
+</div>
+
+{% set condition_why = {
+  "price_above_sma150_sma200": "Confirms the stock trades above its medium- and long-term averages -- a basic sign the uptrend is intact, not just a short bounce.",
+  "sma150_above_sma200": "The medium-term average has overtaken the long-term one -- momentum is building, not fading.",
+  "sma200_trending_up": "The long-term average itself is rising, not flat or falling -- the base trend is genuinely up.",
+  "sma50_above_sma150_sma200": "All three averages are stacked short-above-medium-above-long -- the textbook Stage-2 alignment.",
+  "price_above_sma50": "Price is holding above its short-term average -- near-term strength, not just riding old momentum.",
+  "price_30pct_above_52wk_low": "Enough distance from the bottom to show this isn't a stock still basing or recovering from a crash.",
+  "price_within_25pct_of_52wk_high": "Close enough to its high to be a market leader, not a laggard limping along.",
+  "rs_rank_70_plus": "Outperformed most of the NIFTY 500 over the last 3/6/9/12 months -- genuine relative strength, not just moving with the market.",
+} %}
+<div class="card">
+  <h3 class="supporting">Why It Qualified</h3>
+  {% if screen_item and screen_item.checklist %}
+  {% if screen_item.computed_live %}
+  <div class="live-eval-note">Checked live for this stock — it's outside the NIFTY 500 screen, so RS rank (which ranks against that universe) isn't available and its condition can't pass here.</div>
+  {% endif %}
+  <div class="scorecard">
+    {% for c in screen_item.checklist %}
+    <div class="scorecard-seg {{ 'on' if c.passed else '' }}" title="{{ c.label }}"></div>
+    {% endfor %}
+  </div>
+  {% for c in screen_item.checklist %}
+  <div class="check-row {{ 'pass' if c.passed else 'fail' }}">
+    <span class="check-badge">{{ "✓" if c.passed else "✗" }}</span>
+    <div>
+      <div class="check-label"><span class="term" title="{{ condition_why.get(c.condition, c.label) }}">{{ c.label }}</span></div>
+      <div class="check-detail">{{ c.detail }}</div>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="empty-state">Not enough price history to run the 8-point check on this stock yet.</div>
+  {% endif %}
 </div>
 
 {% set verdict_card_class = {"AVOID": "avoid", "TRADE_VALID": "trade", "WAIT": "wait", "NO_CLEAR_EDGE": "no-edge"}.get(memo.verdict, "wait") %}
 <div class="grid">
-  <div class="card verdict-card {{ 'sentinel' if memo.reasoning == 'Analysis unavailable' else verdict_card_class }}">
+  <div class="card verdict-card {{ 'sentinel' if memo.sentinel else verdict_card_class }}">
     <h2>Setup Review</h2>
-    {% if memo.reasoning == "Analysis unavailable" %}
+    {% if memo.sentinel %}
     <div class="sentinel-box">
       <span class="sentinel-dot"></span>
       <div>
-        <div class="sentinel-text">Analysis unavailable — no API key configured yet.</div>
+        <div class="sentinel-text">{{ memo.reasoning }}</div>
         <div class="verdict-rule" style="margin-top:6px;">below 60 = no trade</div>
       </div>
     </div>
@@ -162,7 +290,7 @@
         <summary style="display:flex; align-items:center; gap:10px;">
           <span class="chevron">&#9656;</span>
           <span class="chip {{ 'good' if signal.direction == 'BUY' else ('bad' if signal.direction == 'SELL' else 'neutral') }}">{{ signal.direction }}</span>
-          <span style="color:var(--muted); font-size:15px;">{{ signal.strategy or "no strategy" }}</span>
+          <span class="signal-label">{{ signal_label }}</span>
         </summary>
         <div class="reveal" style="padding-top:12px;">
           {% if signal.reason %}
@@ -183,11 +311,11 @@
       </div>
       <div class="risk-line">
         <span class="k">Position size</span>
-        {% if position_size is not none %}<span class="v">{{ position_size }}</span>{% else %}<span class="v dim">not tracked — decision support only</span>{% endif %}
+        {% if position_size is not none %}<span class="v">{{ position_size }}</span>{% else %}<span class="v note">You size this yourself</span>{% endif %}
       </div>
       <div class="risk-line">
         <span class="k">Delivery %</span>
-        {% if delivery_pct is not none %}<span class="v">{{ delivery_pct }}</span>{% else %}<span class="v dim">not available yet</span>{% endif %}
+        {% if delivery_pct is not none %}<span class="v">{{ delivery_pct }}</span>{% else %}<span class="v note">Coming soon</span>{% endif %}
       </div>
     </div>
   </div>
@@ -212,7 +340,7 @@
   fetch(`/api/candles/{{ asset }}`).then(r => r.json()).then(data => {
     const chart = LightweightCharts.createChart(document.getElementById('chart'), {
       width: document.getElementById('chart').clientWidth,
-      height: 460,
+      height: document.getElementById('chart').clientHeight,
       layout: { background: { color: 'transparent' }, textColor: '#9CA3AF' },
       grid: { vertLines: { color: '#262B36' }, horzLines: { color: '#262B36' } },
       timeScale: { borderColor: '#262B36' },
@@ -221,15 +349,32 @@
     const candlestickSeries = chart.addCandlestickSeries({
       upColor: '#22C55E', downColor: '#EF4444', borderVisible: false,
       wickUpColor: '#22C55E', wickDownColor: '#EF4444',
+      priceScaleId: 'right',
     });
-    candlestickSeries.setData(data.candles.map(c => ({ time: c[0], open: c[1], high: c[2], low: c[3], close: c[4] })));
+    candlestickSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.25 } });
+    // /api/candles rows are [time, close, open, high, low, volume] -- close comes
+    // before open on the wire, not the usual OHLC order, hence the index remap here.
+    candlestickSeries.setData(data.candles.map(c => ({ time: c[0], open: c[2], high: c[3], low: c[4], close: c[1] })));
     chart.addLineSeries({ color: '#3B82F6', lineWidth: 1 }).setData(data.sma50.map(v => ({ time: v[0], value: v[1] })));
     chart.addLineSeries({ color: '#F59E0B', lineWidth: 1 }).setData(data.sma150.map(v => ({ time: v[0], value: v[1] })));
     chart.addLineSeries({ color: '#EF4444', lineWidth: 1 }).setData(data.sma200.map(v => ({ time: v[0], value: v[1] })));
-    window.addEventListener('resize', () => chart.applyOptions({ width: document.getElementById('chart').clientWidth }));
-  });
 
-  {% if memo.reasoning != "Analysis unavailable" %}
+    const volumeSeries = chart.addHistogramSeries({
+      color: '#3B82F6', priceFormat: { type: 'volume' }, priceScaleId: 'volume',
+    });
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+    volumeSeries.setData(data.volume.map((v, i) => ({
+      time: v[0], value: v[1],
+      color: (data.candles[i] && data.candles[i][1] >= data.candles[i][2]) ? '#22C55E' : '#EF4444',
+    })));
+
+    window.addEventListener('resize', () => chart.applyOptions({
+      width: document.getElementById('chart').clientWidth,
+      height: document.getElementById('chart').clientHeight,
+    }));
+  }).catch(err => console.error('candle fetch failed:', err));
+
+  {% if not memo.sentinel %}
   {% set gauge_color = {"AVOID": "#EF4444", "TRADE_VALID": "#22C55E", "WAIT": "#F59E0B", "NO_CLEAR_EDGE": "#9CA3AF"}.get(memo.verdict, "#F59E0B") %}
   Plotly.newPlot("score-gauge", [{
     type: "indicator",

@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .predictions-hero {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px;
+  }
+  .stat-box {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px; text-align: center;
+  }
+  .stat-value { font-size: 32px; font-weight: 700; color: var(--green); margin-bottom: 4px; }
+  .stat-label { font-size: 14px; color: var(--muted); }
+  .setup-list { display: flex; flex-direction: column; gap: 14px; margin-bottom: 24px; }
+  .setup-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; cursor: pointer; transition: border-color .2s;
+  }
+  .setup-card:hover { border-color: var(--border-strong); }
+  .setup-signal { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .setup-reason { font-size: 15px; color: var(--text); margin-bottom: 10px; line-height: 1.5; }
+  .setup-actions { display: flex; gap: 10px; }
+  .btn-trade { padding: 8px 14px; font-size: 13px; background: var(--blue); color: white; border: none; border-radius: 6px; cursor: pointer; }
+  .btn-trade:hover { filter: brightness(1.1); }
+  .trades-section { margin-top: 30px; }
+  .trade-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+  .trade-table thead { background: var(--surface-2); }
+  .trade-table th { padding: 12px; text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+  .trade-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .trade-table tr:hover { background: var(--surface-2); }
+  .pnl-positive { color: var(--green); }
+  .pnl-negative { color: var(--red); }
+  .status-open { color: var(--amber); }
+  .status-closed { color: var(--green); }
+  @media (max-width: 600px) {
+    .predictions-hero { grid-template-columns: 1fr; }
+    .stat-value { font-size: 28px; }
+    .trade-table { font-size: 12px; }
+    .trade-table th, .trade-table td { padding: 8px; }
+  }
+</style>
+
+<div style="margin-bottom: 20px;">
+  <h2>Next-Day Trade Predictions</h2>
+  <p style="color: var(--muted); margin-top: 4px;">Paper trading portal — record your positions, track wins/losses, test signal predictions.</p>
+</div>
+
+{% if stats.closed_trades > 0 %}
+<div class="predictions-hero">
+  <div class="stat-box">
+    <div class="stat-value">{{ "%.1f"|format(stats.total_pnl) }}</div>
+    <div class="stat-label">Total P&L (closed)</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ "%.1f"|format(stats.avg_pnl_pct) }}%</div>
+    <div class="stat-label">Avg Return</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ stats.closed_trades }}</div>
+    <div class="stat-label">Closed Trades</div>
+  </div>
+</div>
+{% endif %}
+
+<h3 class="supporting">Setups to Review</h3>
+<!-- DEBUG: action_queue={{ action_queue|length if action_queue else 'EMPTY' }} -->
+{% if action_queue %}
+<div class="setup-list">
+  {% for setup in action_queue[:10] %}
+  <div class="setup-card">
+    <div class="setup-signal"><strong>{{ setup.symbol }}</strong> — {{ setup.action }}</div>
+    <div class="setup-reason">{{ setup.reason }}</div>
+    <div class="setup-actions">
+      <button class="btn-trade" onclick="placeTradeForm('{{ setup.symbol }}', 'BUY', '{{ setup.action }}')">Place BUY</button>
+      <button class="btn-trade" onclick="placeTradeForm('{{ setup.symbol }}', 'SELL', '{{ setup.action }}')">Place SELL</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div style="padding: 24px; text-align: center; color: var(--muted); background: var(--surface-2); border-radius: 8px;">
+  No active setups today. Check back after market hours.
+</div>
+{% endif %}
+
+{% if open_trades %}
+<div class="trades-section">
+  <h3 class="supporting">Open Trades</h3>
+  <table class="trade-table">
+    <thead>
+      <tr>
+        <th>Ticker</th>
+        <th>Side</th>
+        <th>Entry</th>
+        <th>Signal</th>
+        <th>Date</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for trade in open_trades %}
+      <tr>
+        <td><strong>{{ trade.ticker }}</strong></td>
+        <td>{{ trade.side }}</td>
+        <td>₹{{ "%.2f"|format(trade.entry_price) }}</td>
+        <td style="font-size: 12px; color: var(--muted);">{{ trade.signal_type }}</td>
+        <td style="font-size: 12px;">{{ trade.entry_date[:10] }}</td>
+        <td>
+          <input type="number" placeholder="Exit price" id="exit_{{ trade.id }}" style="width: 80px; padding: 4px; font-size: 12px;" />
+          <button class="btn-trade" onclick="closeTrade({{ trade.id }})">Close</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if closed_trades %}
+<div class="trades-section">
+  <h3 class="supporting">Closed Trades</h3>
+  <table class="trade-table">
+    <thead>
+      <tr>
+        <th>Ticker</th>
+        <th>Side</th>
+        <th>Entry</th>
+        <th>Exit</th>
+        <th>P&L</th>
+        <th>Return %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for trade in closed_trades %}
+      <tr>
+        <td><strong>{{ trade.ticker }}</strong></td>
+        <td>{{ trade.side }}</td>
+        <td>₹{{ "%.2f"|format(trade.entry_price) }}</td>
+        <td>₹{{ "%.2f"|format(trade.exit_price) }}</td>
+        <td class="{% if trade.pnl > 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+          {{ "%.0f"|format(trade.pnl) if trade.pnl else "—" }}
+        </td>
+        <td class="{% if trade.pnl_pct > 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
+          {{ "%.1f"|format(trade.pnl_pct) if trade.pnl_pct else "—" }}%
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<script>
+  function placeTradeForm(ticker, side, signal) {
+    const price = prompt(`Enter ${side} entry price for ${ticker}:`, "");
+    if (!price) return;
+    placeTrade(ticker, side, parseFloat(price), signal);
+  }
+
+  function placeTrade(ticker, side, entry, signal) {
+    fetch('/api/place-trade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `ticker=${encodeURIComponent(ticker)}&side=${side}&entry_price=${entry}&signal_type=${encodeURIComponent(signal)}`
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'success') {
+        alert(`Trade placed: ${side} ${ticker} @ ₹${entry}`);
+        location.reload();
+      } else {
+        alert('Error: ' + d.msg);
+      }
+    });
+  }
+
+  function closeTrade(id) {
+    const exitEl = document.getElementById(`exit_${id}`);
+    const exit = parseFloat(exitEl.value);
+    if (!exit) { alert('Enter exit price'); return; }
+    fetch('/api/close-trade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `trade_id=${id}&exit_price=${exit}`
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'closed') {
+        alert(`Trade closed: P&L ₹${d.pnl.toFixed(0)} (${d.pnl_pct.toFixed(1)}%)`);
+        location.reload();
+      }
+    });
+  }
+</script>
+{% endblock %}

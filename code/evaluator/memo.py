@@ -37,6 +37,25 @@ def _init_db() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id INTEGER PRIMARY KEY,
+            ticker TEXT NOT NULL,
+            side TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            exit_price REAL,
+            entry_date TEXT NOT NULL,
+            exit_date TEXT,
+            signal_type TEXT,
+            status TEXT DEFAULT 'open',
+            pnl REAL,
+            pnl_pct REAL,
+            notes TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     return conn
 
 
@@ -107,10 +126,33 @@ def _call_llm(prompt: str) -> str:
     return _call_claude(prompt)
 
 
+def _short_error(exc: Exception) -> str:
+    """A one-line, secret-free summary of a failed API call -- HTTP status
+    when there is one (no headers/body, so never leaks the key), otherwise
+    the exception text truncated so a stray huge payload can't blow up the
+    card."""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        return f"HTTP {response.status_code} {response.reason}"
+    return str(exc)[:160]
+
+
+def _sentinel(reasoning: str) -> str:
+    """A gracefully-degraded memo -- always valid JSON, always score<60/AVOID
+    so the '60=no trade' rule holds, but reasoning says specifically WHY
+    there's no real analysis rather than a single catch-all message.
+    sentinel=true lets callers detect this case without string-matching
+    the (now variable) reasoning text."""
+    return json.dumps({
+        "score": 55, "verdict": "AVOID", "reasoning": reasoning,
+        "risk_flags": [], "sentinel": True,
+    })
+
+
 def _call_claude(prompt: str) -> str:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        return '{"score": 55, "verdict": "AVOID", "reasoning": "Analysis unavailable", "risk_flags": []}'
+        return _sentinel("Analysis unavailable — MODEL_PROVIDER=claude but no ANTHROPIC_API_KEY is configured.")
     payload = {
         "model": "claude-sonnet-4-6",
         "max_tokens": 1000,
@@ -124,7 +166,7 @@ def _call_claude(prompt: str) -> str:
         return data["content"][0]["text"]
     except Exception as exc:
         logger.warning("Claude call failed: %s", exc)
-        return '{"score": 55, "verdict": "AVOID", "reasoning": "Analysis unavailable", "risk_flags": []}'
+        return _sentinel(f"Analysis unavailable — Claude call failed: {_short_error(exc)}")
 
 
 OPENAI_MODEL = "gpt-5.6-terra"  # verified against developers.openai.com/api/docs/models 2026-08-20 -- balanced mid tier, not the flagship "sol" or budget "luna"
@@ -133,7 +175,7 @@ OPENAI_MODEL = "gpt-5.6-terra"  # verified against developers.openai.com/api/doc
 def _call_openai(prompt: str) -> str:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return '{"score": 55, "verdict": "AVOID", "reasoning": "Analysis unavailable", "risk_flags": []}'
+        return _sentinel("Analysis unavailable — MODEL_PROVIDER=openai but no OPENAI_API_KEY is configured.")
     payload = {
         "model": OPENAI_MODEL,
         "messages": [{"role": "user", "content": prompt}],
@@ -147,7 +189,7 @@ def _call_openai(prompt: str) -> str:
         return data["choices"][0]["message"]["content"]
     except Exception as exc:
         logger.warning("OpenAI call failed: %s", exc)
-        return '{"score": 55, "verdict": "AVOID", "reasoning": "Analysis unavailable", "risk_flags": []}'
+        return _sentinel(f"Analysis unavailable — OpenAI call failed: {_short_error(exc)}")
 
 
 def build_bundle(
@@ -257,9 +299,10 @@ def generate_memo(bundle: Dict[str, Any], ticker: str, snapshot_date: Optional[s
             parsed = {
                 "score": 55,
                 "verdict": "AVOID",
-                "reasoning": "Analysis unavailable",
+                "reasoning": "Analysis unavailable — the model's response couldn't be parsed as JSON, even after a retry.",
                 "risk_flags": [],
                 "invalidation": [],
+                "sentinel": True,
             }
 
     payload = {
@@ -270,6 +313,7 @@ def generate_memo(bundle: Dict[str, Any], ticker: str, snapshot_date: Optional[s
         "reasoning": parsed.get("reasoning", "Analysis unavailable"),
         "risk_flags": parsed.get("risk_flags", []),
         "invalidation": parsed.get("invalidation", []),
+        "sentinel": bool(parsed.get("sentinel", False)),
         "model_provider": config.MODEL_PROVIDER,
         "generated_at": datetime.utcnow().isoformat(),
     }

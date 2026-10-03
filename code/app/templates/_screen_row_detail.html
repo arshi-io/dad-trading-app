@@ -1,0 +1,42 @@
+{# Expanded detail for one Minervini screen row.
+
+   Rendered on demand by /api/screen-row/{symbol}, not inline in the 500-row
+   table: shipping all 500 of these up front was 2.7MB of the /screen page's
+   3.3MB (84%), all of it hidden until a row is actually tapped. #}
+{% set condition_why = {
+  "price_above_sma150_sma200": "Confirms the stock trades above its medium- and long-term averages -- a basic sign the uptrend is intact, not just a short bounce.",
+  "sma150_above_sma200": "The medium-term average has overtaken the long-term one -- momentum is building, not fading.",
+  "sma200_trending_up": "The long-term average itself is rising, not flat or falling -- the base trend is genuinely up.",
+  "sma50_above_sma150_sma200": "All three averages are stacked short-above-medium-above-long -- the textbook Stage-2 alignment.",
+  "price_above_sma50": "Price is holding above its short-term average -- near-term strength, not just riding old momentum.",
+  "price_30pct_above_52wk_low": "Enough distance from the bottom to show this isn't a stock still basing or recovering from a crash.",
+  "price_within_25pct_of_52wk_high": "Close enough to its high to be a market leader, not a laggard limping along.",
+  "rs_rank_70_plus": "Outperformed most of the NIFTY 500 over the last 3/6/9/12 months -- genuine relative strength, not just moving with the market.",
+} %}
+<div class="row-expand-inner">
+  <div class="why-row">
+    <div class="why-text"><strong>Why:</strong> {{ item.stance_evidence | join(' · ') }}</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <form method="post" action="/api/watchlist/{{ 'remove' if on_watchlist else 'add' }}">
+        <input type="hidden" name="symbol" value="{{ item.symbol }}">
+        <input type="hidden" name="next" value="/screen">
+        <button type="submit" class="btn btn-ghost">{{ '− Remove from Watchlist' if on_watchlist else '+ Add to Watchlist' }}</button>
+      </form>
+      <a class="btn btn-ghost" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
+    </div>
+  </div>
+  <div class="scorecard">
+    {% for c in item.checklist %}
+    <div class="scorecard-seg {{ 'on' if c.passed else '' }}" title="{{ c.label }}"></div>
+    {% endfor %}
+  </div>
+  {% for c in item.checklist %}
+  <div class="check-row {{ 'pass' if c.passed else 'fail' }}">
+    <span class="check-badge">{{ "✓" if c.passed else "✗" }}</span>
+    <div>
+      <div class="check-label"><span class="term" title="{{ condition_why.get(c.condition, c.label) }}">{{ c.label }}</span></div>
+      <div class="check-detail">{{ c.detail }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>

@@ -5,7 +5,7 @@
 <style>
   .pair-card { margin-bottom: 24px; padding-bottom: 20px; }
   .pair-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
-  .pair-name { font-family: var(--font-mono); font-size: 22px; font-weight: 700; }
+  .pair-name { font-family: var(--font-mono); font-size: 22px; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
   .pair-grid { display: grid; grid-template-columns: 0.9fr 1.3fr; gap: 24px; margin-top: 8px; }
   .gauge-box { text-align: center; }
   .zscore-big { font-family: var(--font-mono); font-size: 15px; color: var(--muted); margin-top: -8px; }
@@ -21,20 +21,35 @@
   .footer-note .mono { color: var(--muted); }
   .why-text { color: var(--muted); font-size: 15px; }
   .why-text strong { color: var(--text); font-weight: 600; }
+  .engine-note { color: var(--muted); font-size: 15px; margin: -6px 0 24px 0; max-width: 720px; }
 
   @media (max-width: 780px) {
     .pair-grid { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 600px) {
+    .zscore-big, .trade-line .lbl, .footer-note, .why-text, .engine-note {
+      font-size: 16px;
+    }
+    .pair-name { font-size: 19px; }
+    .pair-card { padding: 20px; }
   }
 </style>
 {% endblock %}
 {% block content %}
 <h1>Spread Trades</h1>
+<p class="engine-note">Cointegrated pairs are found automatically by the engine and re-tested monthly. They can't be hand-picked, because a pairs trade only works between two statistically linked stocks.
+{% if rescan_stats and rescan_stats.tested %}
+Last rescan tested <span class="mono">{{ rescan_stats.tested }}</span> same-sector candidate pairs from the NIFTY 100 and found <span class="mono">{{ rescan_stats.passed }}</span> statistically cointegrated (p&lt;0.05).
+{% endif %}
+</p>
 
 {% if items %}
 {% for item in items %}
 <div class="card pair-card">
   <div class="pair-head">
     <span class="pair-name">{{ item.pair }}</span>
+    {% if item.sector %}<span class="chip neutral">{{ item.sector }}</span>{% endif %}
     {% if item.status in ("BUY", "SELL") %}
     <span class="chip good">ENTRY ZONE</span>
     {% elif item.status == "HOLD" %}
@@ -53,7 +68,7 @@
   <div class="pair-grid">
     <div>
       <div class="gauge-box">
-        <div id="gauge-{{ loop.index }}" style="width: 340px; height: 210px; margin: 0 auto;"></div>
+        <div id="gauge-{{ loop.index }}" style="width: 100%; max-width: 340px; height: 210px; margin: 0 auto; overflow: hidden;"></div>
         <div class="zscore-big"><span class="term" title="The spread is unusually far from its normal relationship between these two stocks; ±2 = fully stretched, time to consider a trade.">z-score</span> {{ "%.2f"|format(item.zscore) }} &middot; 60d window</div>
       </div>
       <div class="trade-line">
@@ -98,12 +113,12 @@
       threshold: { line: { color: zoneColor, width: 5 }, thickness: 0.85, value: z },
     },
   }], {
-    width: 340,
+    width: document.getElementById("gauge-{{ loop.index }}").clientWidth,
     height: 210,
     paper_bgcolor: "transparent",
     font: { color: "#E8EAED", size: 14 },
     margin: { t: 10, b: 0, l: 30, r: 30 },
-  }, { displayModeBar: false });
+  }, { displayModeBar: false, responsive: true });
 
   const spread = {{ item.spread_series | tojson }};
   const upper = {{ item.upper_band_series | tojson }};
@@ -131,6 +146,6 @@
 </script>
 {% endfor %}
 {% else %}
-<div class="empty-state">No pairs currently tracked — nothing to do is also a decision.</div>
+<div class="empty-state">No statistically valid pairs right now — none of the tracked candidates test as cointegrated (p&lt;0.05) this month. Nothing to do is also a decision.</div>
 {% endif %}
 {% endblock %}

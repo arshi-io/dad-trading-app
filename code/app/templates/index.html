@@ -68,6 +68,12 @@
   .watchlist-arrow.bad { color: var(--red); }
   .watchlist-arrow.neutral { color: var(--muted-2); }
   .watchlist-nochange { color: var(--muted-2); font-size: 14px; width: auto; font-weight: 400; }
+  .watchlist-remove-form { margin: 0; }
+  .watchlist-remove {
+    background: transparent; border: 1px solid var(--border-strong); color: var(--muted);
+    width: 32px; height: 32px; border-radius: 50%; font-size: 18px; line-height: 1; cursor: pointer;
+  }
+  .watchlist-remove:hover { color: var(--red); border-color: var(--red); }
 
   .shortlist-card { border-left: 4px solid var(--green); }
   .shortlist-row {
@@ -89,6 +95,46 @@
   .shortlist-rs .mono { color: var(--text); }
   .shortlist-why { color: var(--muted); font-size: 14px; }
   .stance-reason { color: var(--muted); font-size: 13px; }
+
+  .featured-card { border-left: 4px solid var(--green); border-width: 2px; }
+  .featured-note { color: var(--muted); font-size: 15px; margin: -4px 0 20px 0; max-width: 640px; }
+  .featured-row {
+    display: flex; align-items: flex-start; gap: 18px;
+    padding: 20px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .featured-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .featured-row:first-child { padding-top: 0; }
+  .featured-rank {
+    flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 800; font-family: var(--font-mono);
+  }
+  .featured-main { flex: 1; min-width: 240px; }
+  .featured-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .featured-symbol { font-family: var(--font-mono); font-weight: 800; font-size: 21px; }
+  .featured-rs { color: var(--muted); font-size: 15px; }
+  .featured-rs .mono { color: var(--text); font-weight: 700; }
+  .featured-why { color: var(--muted); font-size: 15px; }
+  .featured-why strong { color: var(--text); font-weight: 600; }
+  .diff-badge { font-size: 12px; padding: 3px 9px; vertical-align: middle; }
+
+  @media (max-width: 600px) {
+    /* 3 equal 1fr columns don't shrink below their content's intrinsic
+       width (e.g. "24055.80" at 30px) -- this is the actual cause of the
+       page-level horizontal overflow measured at this width, not the nav.
+       Stack instead, which is also what was asked for regardless. */
+    .tiles { grid-template-columns: 1fr; }
+    .regime-label { font-size: 28px; }
+
+    .tile-label, .watchlist-nochange, .shortlist-rs, .shortlist-why,
+    .stance-reason, .featured-rs, .featured-why, .featured-note {
+      font-size: 16px;
+    }
+
+    .watchlist-remove { width: 44px; height: 44px; font-size: 20px; }
+    .shortlist-row .btn, .featured-row .btn, .queue-item .btn { width: 100%; justify-content: center; }
+  }
 </style>
 {% endblock %}
 {% block content %}
@@ -130,10 +176,47 @@
 </div>
 
 {% set shortlist = (screen_items | selectattr('passed') | list | sort(attribute='rs_rank', reverse=true))[:6] %}
+{% set top_symbols = top_today | map(attribute='symbol') | list %}
+{% set remaining = shortlist | rejectattr('symbol', 'in', top_symbols) | list %}
+
+<div class="card featured-card">
+  <h2>Strongest setups to review</h2>
+  <p class="featured-note">Ranked by template pass, RS, and fit with today's regime — evidence for you to weigh, not a buy list. Each still opens the full briefing in Stock Room before you decide.</p>
+  {% if top_today %}
+  {% for item in top_today %}
+  {% set d = diffs.get(item.symbol) if diffs else none %}
+  {% set stance_label = "NO SETUP" if item.stance == "AVOID / NO SETUP" else (item.stance or "—") %}
+  {% set stance_cls = "neutral" if item.stance == "AVOID / NO SETUP" else (item.stance_class or "neutral") %}
+  <div class="featured-row">
+    <span class="featured-rank">{{ loop.index }}</span>
+    <div class="featured-main">
+      <div class="featured-top">
+        <a class="featured-symbol" href="/stock/{{ item.symbol }}">{{ item.symbol }}</a>
+        <span class="chip {{ stance_cls }}" style="font-size:15px; padding:6px 14px;">{{ stance_label }}</span>
+        {% if d and d.badge %}
+        <span class="chip {{ d.badge_class }} diff-badge" title="{{ d.detail if d.detail else 'New in the screen since yesterday' }}">{{ d.badge }}{% if d.detail %} {{ d.detail }}{% endif %}</span>
+        {% endif %}
+        {% if item.passed and item.stance_class == "wait" %}
+        <span class="stance-reason">strong setup, {{ regime_phrase }}</span>
+        {% endif %}
+        <span class="featured-rs"><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">RS</span> <span class="mono">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span></span>
+      </div>
+      {% if item.stance_evidence %}
+      <div class="featured-why"><strong>Why it surfaced:</strong> {{ item.stance_evidence | join(' · ') }}</div>
+      {% endif %}
+    </div>
+    <a class="btn" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="empty-state">No setups passed the screen today — nothing to do is also a decision.</div>
+  {% endif %}
+</div>
+
 <div class="card shortlist-card">
   <h2>Stocks to review today</h2>
-  {% if shortlist %}
-  {% for item in shortlist %}
+  {% if remaining %}
+  {% for item in remaining %}
   <div class="shortlist-row">
     <span class="shortlist-rank">{{ loop.index }}</span>
     <div class="shortlist-main">
@@ -154,6 +237,8 @@
     <a class="btn btn-ghost" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
   </div>
   {% endfor %}
+  {% elif shortlist %}
+  <div class="empty-state">The rest of today's qualifying setups are all featured above.</div>
   {% else %}
   <div class="empty-state">No setups passed the screen today — nothing to do is also a decision.</div>
   {% endif %}
@@ -209,6 +294,11 @@
       <span class="chip {{ today_cls }}">{{ today_label }}</span>
       {% endif %}
     </div>
+    <form method="post" action="/api/watchlist/remove" class="watchlist-remove-form">
+      <input type="hidden" name="symbol" value="{{ row.symbol }}">
+      <input type="hidden" name="next" value="/">
+      <button type="submit" class="watchlist-remove" title="Remove {{ row.symbol }} from the watchlist" aria-label="Remove {{ row.symbol }} from the watchlist">&times;</button>
+    </form>
   </div>
   {% endfor %}
   {% else %}

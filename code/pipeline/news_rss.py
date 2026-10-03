@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import html
 import logging
+import threading
+from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urljoin
 
 import pandas as pd
@@ -30,6 +32,40 @@ _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
 }
 
+# Per-feed timeout. Deliberately short: five feeds are fetched in sequence, so
+# a 10s timeout meant one hung publisher could stall a page load for 10s+ (and
+# all five for ~50s). Headlines are supporting context on an EOD dashboard --
+# dropping a slow feed costs far less than making the user wait for it.
+_FEED_TIMEOUT_SECONDS = 4
+
+# These are market-wide headlines, identical for every ticker and every
+# viewer, so re-fetching them per page view was pure waste: measured at
+# 4.3-29.5s per Stock Room load, 85-95% of the whole request. One shared
+# TTL cache turns that into a single fetch per window.
+_CACHE_TTL = timedelta(minutes=15)
+_cache: dict[int, Tuple[datetime, List[Dict[str, Any]]]] = {}
+_cache_lock = threading.Lock()
+
+
+def _cached(limit: int) -> Optional[List[Dict[str, Any]]]:
+    with _cache_lock:
+        entry = _cache.get(limit)
+        if entry and datetime.now() - entry[0] < _CACHE_TTL:
+            return entry[1]
+    return None
+
+
+def _store(limit: int, items: List[Dict[str, Any]]) -> None:
+    with _cache_lock:
+        _cache[limit] = (datetime.now(), items)
+
+
+def clear_news_cache() -> None:
+    """Drop the cached feed pull (tests, and the nightly job which should
+    always see fresh headlines rather than a 15-minute-old slice)."""
+    with _cache_lock:
+        _cache.clear()
+
 
 def _parse_pubdate(raw: str) -> str:
     """Best-effort RFC-822 pubDate -> ISO string. Falls back to the raw text."""
@@ -49,13 +85,18 @@ def fetch_news_items(limit: int = 6) -> List[Dict[str, Any]]:
     Items are deduped by normalised title (some stories get syndicated
     across publishers) before the per-source slice count is applied.
     """
+    hit = _cached(limit)
+    if hit is not None:
+        logger.debug("fetch_news_items(limit=%d) served from cache (%d items)", limit, len(hit))
+        return hit
+
     items: List[Dict[str, Any]] = []
     seen_titles = set()
     per_source = max(1, limit // len(SOURCES))
 
     for source_name, url in SOURCES:
         try:
-            resp = requests.get(url, headers=_HEADERS, timeout=10)
+            resp = requests.get(url, headers=_HEADERS, timeout=_FEED_TIMEOUT_SECONDS)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.content, "xml")
             taken = 0
@@ -83,4 +124,6 @@ def fetch_news_items(limit: int = 6) -> List[Dict[str, Any]]:
 
     if not items:
         items.append({"source": "System", "title": "Markets data refreshed; no headline feed available.", "link": "", "ts": ""})
-    return items[:limit]
+    result = items[:limit]
+    _store(limit, result)
+    return result

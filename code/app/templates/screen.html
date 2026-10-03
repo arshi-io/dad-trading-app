@@ -59,6 +59,7 @@
   .stance-reason { color: var(--muted); font-size: 12px; line-height: 1.3; }
 
   .row-expand-cell { padding: 0 16px 22px 16px; }
+  .row-detail-loading { color: var(--muted); padding: 14px 20px; font-size: 15px; }
   .row-expand-inner { padding: 18px 20px; background: var(--surface-2); border-radius: 10px; border: 1px solid var(--border); }
 
   .why-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
@@ -113,6 +114,55 @@
     .conditions-cell { display: none; }
     .row-link { display: none; }
     .filter-label { display: none; }
+  }
+
+  /* Phone: 500 rows in a rigid table just doesn't work below 600px -- each
+     stock becomes its own card (block layout throughout; table-layout:fixed
+     alone still left a real overflow, measured 512px content in a 356px
+     table-wrap that its own overflow:hidden then silently clipped). Summary
+     + expanded panel share one continuous card outline instead of two
+     separately-bordered pieces. */
+  @media (max-width: 600px) {
+    .table-wrap { border: none; border-radius: 0; overflow: visible; background: transparent; }
+    table, tbody, tr.data-row, td.row-summary { display: block; width: 100%; }
+    thead { display: none; }
+    tbody tr.data-row { margin-bottom: 14px; }
+    tbody tr.data-row:last-child { margin-bottom: 0; }
+    tbody tr.data-row:nth-child(even) { background: transparent; }
+    tbody tr.data-row:hover { background: transparent; }
+
+    .row-summary summary {
+      display: flex; flex-wrap: wrap; align-items: center;
+      gap: 10px 10px; padding: 16px;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+    }
+    details[open] .row-summary summary { border-radius: 12px 12px 0 0; }
+
+    .symbol-cell { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; row-gap: 6px; }
+    .rs-badge { flex-shrink: 0; }
+    .stance-cell { flex: 1 0 100%; }
+    .row-link { display: none; }
+    .row-num { display: none; }
+
+    /* re-shown (hidden at the 720px tier above) as its own labeled line --
+       "8 / 8" alone meant something under the old table header; standalone
+       in a card it needs the word next to it. */
+    .conditions-cell {
+      display: block; flex: 1 0 100%;
+      font-size: 15px; color: var(--muted); font-family: var(--font-sans);
+    }
+    .conditions-cell::before { content: "Conditions passed: "; }
+
+    .row-expand-cell { padding: 0; margin: -1px 0 0 0; }
+    .row-expand-inner { border-radius: 0 0 12px 12px; border-top: none; }
+
+    .diff-badge { font-size: 13px; }
+    .rs-delta { font-size: 14px; }
+    .stance-reason { font-size: 14px; }
+    .filter-count { font-size: 15px; }
+    .why-text, .check-detail, .vcp-label { font-size: 16px; }
+    .why-row { flex-direction: column; align-items: stretch; }
+    .why-row .btn { width: 100%; justify-content: center; min-height: 48px; }
   }
 </style>
 {% endblock %}
@@ -196,27 +246,8 @@
             <span class="conditions-cell">{{ item.conditions_passed }} / 8</span>
             <a class="row-link" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
           </summary>
-          <div class="reveal row-expand-cell">
-            <div class="row-expand-inner">
-              <div class="why-row">
-                <div class="why-text"><strong>Why:</strong> {{ item.stance_evidence | join(' · ') }}</div>
-                <a class="btn btn-ghost" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
-              </div>
-              <div class="scorecard">
-                {% for c in item.checklist %}
-                <div class="scorecard-seg {{ 'on' if c.passed else '' }}" title="{{ c.label }}"></div>
-                {% endfor %}
-              </div>
-              {% for c in item.checklist %}
-              <div class="check-row {{ 'pass' if c.passed else 'fail' }}">
-                <span class="check-badge">{{ "✓" if c.passed else "✗" }}</span>
-                <div>
-                  <div class="check-label"><span class="term" title="{{ condition_why.get(c.condition, c.label) }}">{{ c.label }}</span></div>
-                  <div class="check-detail">{{ c.detail }}</div>
-                </div>
-              </div>
-              {% endfor %}
-            </div>
+          <div class="reveal row-expand-cell" data-detail-for="{{ item.symbol }}">
+            <div class="row-detail-loading">Loading checklist&hellip;</div>
           </div>
         </details>
       </td>
@@ -237,6 +268,30 @@
 
 {% if items %}
 <script>
+  // Each row's 8-point checklist is fetched the first time that row is
+  // opened, not shipped with the page (it was 84% of the HTML, all of it
+  // collapsed). Fetched once per row, then cached in the DOM.
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('details.row-details').forEach(function (details) {
+      details.addEventListener('toggle', function () {
+        if (!details.open) return;
+        const holder = details.querySelector('[data-detail-for]');
+        if (!holder || holder.dataset.loaded === '1' || holder.dataset.loading === '1') return;
+        holder.dataset.loading = '1';
+        fetch('/api/screen-row/' + encodeURIComponent(holder.dataset.detailFor))
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            holder.innerHTML = html;
+            holder.dataset.loaded = '1';
+          })
+          .catch(function () {
+            holder.innerHTML = '<div class="row-expand-inner">Could not load the checklist — open Stock Room for the full view.</div>';
+          })
+          .finally(function () { holder.dataset.loading = '0'; });
+      });
+    });
+  });
+
   // Filters the table already on the page -- no navigation, no network call.
   // Distinct from the nav search (which always goes to Stock Room).
   document.addEventListener('DOMContentLoaded', function () {

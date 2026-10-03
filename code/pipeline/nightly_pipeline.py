@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -13,7 +14,7 @@ import yfinance as yf
 
 from code.data.cleaners.ohlcv import clean_ohlcv
 from code.data.fetchers.equity import fetch_ohlcv
-from code.data.fetchers.nifty500 import fetch_nifty500_constituents
+from code.data.fetchers.nifty500 import fetch_nifty100_sector_map, fetch_nifty500_constituents
 from code.pipeline.news_rss import fetch_news_items
 from code.regime.market_regime import classify_market_regime
 from code.signals.garch_volatility import forecast_volatility, classify_regime
@@ -61,12 +62,38 @@ def _to_ist(dt: datetime) -> datetime:
     return dt
 
 
-def kite_fetch(ticker: str, start: Optional[str] = None, end: Optional[str] = None) -> pd.DataFrame:
-    """Fetch EOD OHLCV data using yfinance with a lightweight fallback path."""
+# EOD bars don't change during the day, but every Stock Room view (and every
+# /api/candles call behind its chart) was re-downloading them from yfinance --
+# measured at 74-1207ms of dead weight per view, twice per page. Same on-disk
+# parquet store the nightly universe fetch already uses, with a shorter TTL so
+# the evening's new bar still lands the same day.
+KITE_CACHE_TTL = timedelta(hours=6)
+
+
+def _kite_cache_path(ticker: str) -> Path:
+    safe = ticker.replace("&", "_AND_").replace("/", "_")
+    return PRICES_DIR / f"kite_{safe}.parquet"
+
+
+def kite_fetch(ticker: str, start: Optional[str] = None, end: Optional[str] = None, use_cache: bool = True) -> pd.DataFrame:
+    """Fetch EOD OHLCV data using yfinance, cached to parquet (6h TTL).
+
+    ``use_cache=False`` forces a live pull -- used by the nightly pipeline,
+    which must not build a snapshot out of the cache it wrote itself.
+    """
     if start is None:
         start = (date.today().replace(year=date.today().year - 2)).strftime("%Y-%m-%d")
     if end is None:
         end = date.today().strftime("%Y-%m-%d")
+
+    cache_path = _kite_cache_path(ticker)
+    if use_cache and cache_path.exists():
+        age = datetime.now() - datetime.fromtimestamp(cache_path.stat().st_mtime)
+        if age < KITE_CACHE_TTL:
+            try:
+                return pd.read_parquet(cache_path)
+            except Exception as exc:  # corrupt/partial file -- fall through to a live fetch
+                logger.warning("kite_fetch cache unreadable for %s: %s", ticker, exc)
 
     try:
         df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
@@ -83,6 +110,13 @@ def kite_fetch(ticker: str, start: Optional[str] = None, end: Optional[str] = No
     if "close" in df.columns:
         df = df[["open", "high", "low", "close", "volume"]].copy()
     df.index = pd.DatetimeIndex(df.index, name="timestamp")
+
+    if use_cache and not df.empty:
+        try:
+            PRICES_DIR.mkdir(parents=True, exist_ok=True)
+            df.to_parquet(cache_path)
+        except Exception as exc:  # caching is best-effort; never fail the request over it
+            logger.warning("kite_fetch cache write failed for %s: %s", ticker, exc)
     return df
 
 
@@ -279,46 +313,98 @@ def build_screen_section(
     return {"items": items}
 
 
-# Candidate universe for the pairs scan -- the pairs validated in the v1
-# backtest (raw/data/backtest_pairs_trading_v1.csv). Monthly re-scan re-runs
-# find_cointegrated_pairs/hedge-ratio over this fixed candidate set rather
-# than combinatorics across the whole NIFTY 500 universe.
-PAIR_CANDIDATES = [
-    ("ICICIBANK.NS", "SBIN.NS"),
-    ("AXISBANK.NS", "MARUTI.NS"),
-    ("RELIANCE.NS", "MARUTI.NS"),
-]
 PAIRS_WINDOW = 60
 PAIRS_ENTRY_Z = 2.0
 PAIRS_EXIT_Z = 0.5
 PAIRS_HISTORY_YEARS = 3
 PAIRS_CHART_DAYS = 180
 PAIR_BASE_QTY = 100  # shares of ticker_a used to express hedge ratio as a share count
+PAIRS_TOP_N = 10  # keep only the N most-significant survivors -- enough to fill the tab, not overwhelm it
+PAIRS_CACHE_PATH = ROOT / "data" / "pairs_cointegration_cache.json"
+
+
+def run_pairs_monthly_rescan() -> Dict[str, Any]:
+    """The expensive O(n^2)-per-sector cointegration search -- MONTHLY ONLY,
+    never from the nightly job.
+
+    Candidate universe: every within-sector pair from the NIFTY 100 (Industry
+    column from fetch_nifty100_sector_map). Cross-sector pairs are skipped --
+    they're rarely cointegrated and just waste compute. find_cointegrated_pairs
+    itself (pairs_trading.py, unchanged) does the actual Engle-Granger test
+    and hedge-ratio OLS for every pair within each sector bucket.
+
+    Caches the top PAIRS_TOP_N survivors (by p-value) to PAIRS_CACHE_PATH;
+    build_pairs_section() (the nightly job) reads this cache and only
+    recomputes the live z-score, never re-runs the search.
+    """
+    started = time.monotonic()
+    end = date.today().strftime("%Y-%m-%d")
+    start = (date.today() - timedelta(days=365 * PAIRS_HISTORY_YEARS)).strftime("%Y-%m-%d")
+
+    sectors = fetch_nifty100_sector_map()
+    tested = 0
+    survivors: List[Dict[str, Any]] = []
+    for sector, tickers in sectors.items():
+        n = len(tickers)
+        if n < 2:
+            continue
+        tested += n * (n - 1) // 2
+        try:
+            scan = find_cointegrated_pairs(tickers, start=start, end=end, pvalue_threshold=0.05)
+        except Exception as exc:
+            logger.warning("pairs monthly rescan failed for sector %r (%d tickers): %s", sector, n, exc)
+            continue
+        for info in scan:
+            info["sector"] = sector
+        survivors.extend(scan)
+
+    survivors.sort(key=lambda d: d["pvalue"])
+    kept = survivors[:PAIRS_TOP_N]
+    elapsed = time.monotonic() - started
+
+    cache_payload = {
+        "generated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "candidates_tested": tested,
+        "candidates_passed": len(survivors),
+        "elapsed_seconds": round(elapsed, 1),
+        "pairs": kept,
+    }
+    _atomic_write_json(PAIRS_CACHE_PATH, cache_payload)
+    logger.info(
+        "pairs monthly rescan done: %d sectors, %d candidates tested, %d passed p<0.05, kept top %d, %.1fs",
+        len(sectors), tested, len(survivors), len(kept), elapsed,
+    )
+    return cache_payload
+
+
+def _load_pairs_cache() -> Optional[Dict[str, Any]]:
+    if not PAIRS_CACHE_PATH.exists():
+        return None
+    try:
+        return json.loads(PAIRS_CACHE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("pairs cache unreadable, treating as empty: %s", exc)
+        return None
 
 
 def build_pairs_section() -> Dict[str, Any]:
-    """Pairs (spread trading) section: cointegration re-scan + current z-score.
+    """Pairs (spread trading) section for the NIGHTLY job.
 
-    Wraps the EXISTING pairs_trading.py unchanged -- find_cointegrated_pairs
-    for the hedge ratio (rolling OLS) + cointegration p-value + half-life,
-    compute_spread/compute_zscore (mean_rev.py) for the live 60d z-score.
+    Reads the cointegrated survivors cached by run_pairs_monthly_rescan()
+    (the expensive O(n^2) search never runs here) and only recomputes each
+    survivor's live 60d z-score / spread chart via compute_spread/
+    compute_zscore (mean_rev.py) -- cheap, safe to run every night.
     """
+    cache = _load_pairs_cache()
+    if not cache or not cache.get("pairs"):
+        return {"items": [], "last_scan": cache.get("generated_at") if cache else None}
+
     end = date.today().strftime("%Y-%m-%d")
     start = (date.today() - timedelta(days=365 * PAIRS_HISTORY_YEARS)).strftime("%Y-%m-%d")
 
     items: List[Dict[str, Any]] = []
-    for ticker_a, ticker_b in PAIR_CANDIDATES:
-        try:
-            scan = find_cointegrated_pairs(
-                [ticker_a, ticker_b], start=start, end=end, pvalue_threshold=1.0,
-            )
-        except Exception as exc:
-            logger.warning("pairs scan failed for %s/%s: %s", ticker_a, ticker_b, exc)
-            continue
-        if not scan:
-            continue
-        info = scan[0]
-
+    for info in cache["pairs"]:
+        ticker_a, ticker_b = info["ticker_a"], info["ticker_b"]
         df_a = clean_ohlcv(fetch_ohlcv(ticker_a, start, end))
         df_b = clean_ohlcv(fetch_ohlcv(ticker_b, start, end))
         if df_a.empty or df_b.empty:
@@ -348,6 +434,7 @@ def build_pairs_section() -> Dict[str, Any]:
             "pair": f"{ticker_a}/{ticker_b}",
             "ticker_a": ticker_a,
             "ticker_b": ticker_b,
+            "sector": info.get("sector"),
             "hedge_ratio": float(info["hedge_ratio"]),
             "qty_a": PAIR_BASE_QTY,
             "qty_b": int(round(PAIR_BASE_QTY * info["hedge_ratio"])),
@@ -363,7 +450,7 @@ def build_pairs_section() -> Dict[str, Any]:
             "lower_band_series": _series_points(lower_chart),
         })
 
-    return {"items": items, "last_scan": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+    return {"items": items, "last_scan": cache["generated_at"]}
 
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -463,7 +550,7 @@ def run_pipeline() -> Dict[str, Any]:
     today = date.today().strftime("%Y-%m-%d")
     snapshot_path = SNAPSHOT_DIR / f"{today}.json"
 
-    nifty = kite_fetch(NIFTY_INDEX_TICKER)
+    nifty = kite_fetch(NIFTY_INDEX_TICKER, use_cache=False)
     if nifty.empty:
         nifty = pd.DataFrame({"close": [None]}, index=[pd.Timestamp.today()])
     nifty.index = pd.DatetimeIndex(nifty.index, name="timestamp")

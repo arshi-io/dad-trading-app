@@ -21,6 +21,8 @@ code/data/snapshots/*
 code/data/prices/*
 !code/data/prices/.gitkeep
 code/data/nifty500_constituents.csv
+code/data/nifty100_constituents.csv
+code/data/pairs_cointegration_cache.json
 *.db
 
 # Local run artifacts
