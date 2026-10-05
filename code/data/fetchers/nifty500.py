@@ -84,6 +84,12 @@ def fetch_nifty500_directory(force_refresh: bool = False) -> List[Dict[str, str]
     ]
 
 
+def fetch_nifty500_sectors(force_refresh: bool = False) -> Dict[str, str]:
+    """Return {"RELIANCE.NS": "Oil Gas & Consumable Fuels", ...}."""
+    df = _load_constituent_csv(CONSTITUENT_URL, CACHE_PATH, force_refresh)
+    return {f"{row['Symbol']}.NS": str(row["Industry"]) for _, row in df.iterrows()}
+
+
 def fetch_nifty100_sector_map(force_refresh: bool = False) -> Dict[str, List[str]]:
     """Return {"Industry name": ["SYMBOL.NS", ...]} for the NIFTY 100.
 

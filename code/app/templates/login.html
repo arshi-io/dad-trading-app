@@ -6,98 +6,44 @@
 <title>Papa Terminal — Enter PIN</title>
 <style>
   :root {
-    --bg: #0E1117;
-    --surface: #171B23;
-    --surface-2: #1D2330;
-    --border: #262B36;
-    --border-strong: #333A48;
-    --text: #E8EAED;
-    --muted: #9CA3AF;
-    --muted-2: #6B7280;
-    --green: #22C55E;
-    --red: #EF4444; --red-dim: #2B1616;
-    --amber: #F59E0B; --amber-dim: #2B2010;
-    --blue: #3B82F6;
-    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", "Consolas", "Roboto Mono", monospace;
+    --bg: #141414; --surface: #1b1b1b; --surface-2: #232323; --border: #2a2a2a; --border-strong: #363636;
+    --text: #e4e4e4; --muted: #999999; --red: #e5534b; --amber: #d4a03d; --blue: #4184f3;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; min-height: 100vh;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--bg); color: var(--text);
-    font-family: var(--font-sans); font-size: 18px; line-height: 1.5;
-    padding: 24px;
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 16px; line-height: 1.5; padding: 24px;
   }
-  .login-card {
-    width: 100%; max-width: 400px;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-    padding: 36px 28px;
-  }
-  .brand {
-    display: flex; align-items: center; justify-content: center; gap: 9px;
-    font-family: var(--font-mono); font-weight: 700; font-size: 19px;
-    letter-spacing: 0.06em; margin-bottom: 8px;
-  }
-  .brand .dot {
-    width: 9px; height: 9px; border-radius: 50%;
-    background: var(--green); box-shadow: 0 0 6px var(--green); flex-shrink: 0;
-  }
-  .subtitle { text-align: center; color: var(--muted); font-size: 16px; margin: 0 0 28px 0; }
-
-  .pin-boxes { display: flex; justify-content: center; gap: 10px; margin-bottom: 24px; }
-  .pin-box {
-    width: 44px; height: 54px; border-radius: 10px;
-    background: var(--surface-2); border: 1px solid var(--border-strong);
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-mono); font-size: 26px; font-weight: 700;
-    transition: border-color .12s ease;
-  }
-  .pin-box.filled { border-color: var(--blue); color: var(--text); }
+  .login-card { width: 100%; max-width: 340px; }
+  .brand { text-align: center; font-weight: 600; font-size: 18px; margin-bottom: 4px; }
+  .subtitle { text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 28px 0; }
+  .pin-boxes { display: flex; justify-content: center; gap: 12px; margin-bottom: 28px; }
+  .pin-box { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border-strong); font-size: 0; }
+  .pin-box.filled { background: var(--text); border-color: var(--text); }
   .pin-box.error { border-color: var(--red); }
-
-  /* Real input carries the value + accessibility; visually collapsed to a
-     hairline so it can still be focused/typed into with a physical
-     keyboard or screen reader, while the boxes above are what's seen. */
-  #pin-input {
-    position: absolute; opacity: 0; height: 44px; width: 1px;
-    pointer-events: none;
-  }
-
-  .message {
-    text-align: center; font-size: 16px; padding: 12px 14px; border-radius: 8px;
-    margin-bottom: 20px;
-  }
-  .message.error { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
-  .message.locked { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber); }
-
-  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  #pin-input { position: absolute; opacity: 0; height: 44px; width: 1px; pointer-events: none; }
+  .message { text-align: center; font-size: 14px; margin-bottom: 18px; }
+  .message.error { color: var(--red); }
+  .message.locked { color: var(--amber); }
+  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
   .keypad button {
-    min-height: 64px;
-    background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text);
-    border-radius: 12px; font-size: 24px; font-weight: 700; font-family: var(--font-mono);
-    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    min-height: 60px; background: transparent; border: none; color: var(--text); border-radius: 50%;
+    font-size: 24px; font-weight: 400; cursor: pointer; -webkit-tap-highlight-color: transparent; font-family: inherit;
   }
-  .keypad button:active { background: var(--border-strong); }
-  .keypad button:disabled { opacity: 0.35; cursor: default; }
+  .keypad button:active { background: var(--surface-2); }
+  .keypad button:disabled { opacity: 0.3; cursor: default; }
   .keypad .key-empty { visibility: hidden; }
   .keypad .key-back { font-size: 20px; color: var(--muted); }
-
-  .unlock-btn {
-    width: 100%; min-height: 52px;
-    background: var(--blue); color: #fff; border: none; border-radius: 10px;
-    font-size: 18px; font-weight: 700; cursor: pointer;
-  }
-  .unlock-btn:disabled { opacity: 0.5; cursor: default; }
-  .unlock-btn:not(:disabled):hover { filter: brightness(1.1); }
-
-  noscript p { text-align: center; color: var(--muted); font-size: 15px; }
+  .unlock-btn { width: 100%; min-height: 46px; background: var(--blue); color: #fff; border: none; border-radius: 4px; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .unlock-btn:disabled { opacity: 0.45; cursor: default; }
+  noscript p { text-align: center; color: var(--muted); font-size: 14px; }
 </style>
 </head>
 <body>
   <div class="login-card">
-    <div class="brand"><span class="dot"></span>PAPA TERMINAL</div>
+    <div class="brand">Papa Terminal</div>
     <p class="subtitle">Enter your 6-digit PIN</p>
 
     {% if locked_seconds %}
@@ -142,7 +88,7 @@
     <noscript><p style="margin-top:16px;">JavaScript is off — type your PIN above and press Unlock.</p></noscript>
   </div>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (function () {
       const input = document.getElementById('pin-input');
       const boxes = document.querySelectorAll('.pin-box');
@@ -154,7 +100,7 @@
         const val = input.value;
         boxes.forEach((box, i) => {
           box.classList.toggle('filled', i < val.length);
-          box.textContent = i < val.length ? '●' : '';
+          
         });
       }
       input.addEventListener('input', () => {

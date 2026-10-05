@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    env_file: .env
+    ports:
+      - "8731:8000"
+    volumes:
+      # SQLite db, snapshots and price caches survive container rebuilds
+      - papa-data:/app/code/data
+    restart: unless-stopped
+
+volumes:
+  papa-data:

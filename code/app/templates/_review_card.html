@@ -1,0 +1,37 @@
+{% if memo is none %}
+<div class="review-loading" data-review-for="1">
+  <div class="label">Setup review</div>
+  <div class="sentinel-box"><span class="sentinel-dot pulse"></span><span class="sentinel-text">Writing the review — about 5 to 10 seconds…</span></div>
+</div>
+{% elif memo.sentinel %}
+<div class="label">Setup review</div>
+<div class="sentinel-box">
+  <span class="sentinel-dot"></span>
+  <div><div class="sentinel-text">{{ memo.reasoning }}</div></div>
+</div>
+{% else %}
+<div class="label">Setup review</div>
+<div class="verdict-top">
+  <div class="score-meter" aria-label="Setup score {{ memo.score }} out of 100">
+    <div class="score-num">{{ memo.score }}</div>
+    <div class="score-bar"><span style="width: {{ memo.score }}%;" class="{{ quality_class }}"></span><i style="left: 60%;"></i></div>
+    <div class="score-cap">60 = minimum to trade</div>
+  </div>
+  <div>
+    {% if quality_word %}<div class="setup-quality {{ quality_class }}">SETUP QUALITY: {{ quality_word }}</div>{% endif %}
+    <div class="chip {{ stance_class or 'neutral' }}" style="margin-top: 6px;">{{ stance or memo.verdict }}</div>
+  </div>
+</div>
+{% if stance_evidence %}<div class="why-text" style="margin-bottom: 12px;"><strong>Why:</strong> {{ stance_evidence | join(' · ') }}</div>{% endif %}
+<p>{{ memo.reasoning }}</p>
+{% if memo.risk_flags %}
+<ul class="risk-flags">{% for flag in memo.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
+{% endif %}
+{% if memo.invalidation %}
+<div class="invalidation-box">
+  <h4><span class="term" title="If any of these happen, the case above no longer holds.">What would invalidate this</span></h4>
+  <ul class="invalidation-list">{% for cond in memo.invalidation %}<li>{{ cond }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+<div class="verdict-rule" style="margin-top: 12px;">Decision support only — you decide.</div>
+{% endif %}

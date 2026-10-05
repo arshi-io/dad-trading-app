@@ -1,194 +1,366 @@
 {% extends "base.html" %}
-{% block content %}
+{% block title %}Paper Trading — Papa Terminal{% endblock %}
+{% block extra_head %}
 <style>
-  .predictions-hero {
-    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px;
-  }
-  .stat-box {
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
-    padding: 18px; text-align: center;
-  }
-  .stat-value { font-size: 32px; font-weight: 700; color: var(--green); margin-bottom: 4px; }
-  .stat-label { font-size: 14px; color: var(--muted); }
-  .setup-list { display: flex; flex-direction: column; gap: 14px; margin-bottom: 24px; }
-  .setup-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 16px; cursor: pointer; transition: border-color .2s;
-  }
-  .setup-card:hover { border-color: var(--border-strong); }
-  .setup-signal { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
-  .setup-reason { font-size: 15px; color: var(--text); margin-bottom: 10px; line-height: 1.5; }
-  .setup-actions { display: flex; gap: 10px; }
-  .btn-trade { padding: 8px 14px; font-size: 13px; background: var(--blue); color: white; border: none; border-radius: 6px; cursor: pointer; }
-  .btn-trade:hover { filter: brightness(1.1); }
-  .trades-section { margin-top: 30px; }
-  .trade-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
-  .trade-table thead { background: var(--surface-2); }
-  .trade-table th { padding: 12px; text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
-  .trade-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  .trade-table tr:hover { background: var(--surface-2); }
-  .pnl-positive { color: var(--green); }
-  .pnl-negative { color: var(--red); }
-  .status-open { color: var(--amber); }
-  .status-closed { color: var(--green); }
+  .funds { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .funds > div { padding: 2px 16px 2px 0; }
+  .funds > div + div { padding-left: 16px; border-left: 1px solid var(--border); }
+  .funds .v { font-size: 20px; font-weight: 500; }
+  .funds .s { font-size: 12px; color: var(--muted); }
+  .posture-line { font-size: 14px; color: var(--muted); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .posture-line b { font-weight: 600; }
+
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .search { display: flex; gap: 6px; flex: 1 1 260px; }
+  .search input { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 4px; }
+  .seg { display: flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .seg button { background: transparent; color: var(--muted); border: none; font: inherit; font-size: 13px; padding: 7px 12px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.active { background: var(--surface-2); color: var(--text); font-weight: 600; }
+  select.sort { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 13px; padding: 7px 8px; border-radius: 4px; }
+
+  .pp-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px; }
+  .pp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .pp-sym { font-size: 16px; font-weight: 600; color: var(--text); }
+  .pp-sym + .chip { margin-left: 8px; vertical-align: 2px; }
+  .pp-px { text-align: right; white-space: nowrap; font-size: 14px; }
+  .pp-sub { color: var(--muted); font-size: 13px; margin: 3px 0 10px; }
+  .note { font-size: 13px; color: var(--amber); margin: -4px 0 8px; }
+  .note.plan { color: var(--text); }
+  .levels { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 8px 0; margin-bottom: 8px; }
+  .levels .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .levels .v { font-size: 15px; font-weight: 500; }
+  .proj { font-size: 13px; color: var(--muted); }
+  .exit-rule { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 13px; padding: 7px 6px; border-radius: 4px; }
+  .pp-chart-toggle { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .pp-chart-toggle summary { display: inline-block; padding: 4px 0; }
+  .pp-chart { height: 220px; margin-top: 6px; }
+  .trade { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .trade input { width: 84px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 7px 8px; border-radius: 4px; }
+  .trade .cost { flex: 1 1 150px; font-size: 13px; color: var(--muted); }
+  .more { width: 100%; margin: 4px 0 20px; }
+
+  .book { border-top: 1px solid var(--border); }
+  .pos { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .pos .l { min-width: 0; flex: 1; }
+  .pos .t { font-size: 14px; }
+  .pos .t b { font-weight: 600; }
+  .pos .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .pos .r { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .pos .pnl { font-size: 15px; font-weight: 500; }
+  .btn-sm { background: transparent; border: 1px solid var(--border-strong); color: var(--text); font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+  .btn-sm.confirm { border-color: var(--red); color: var(--red); }
+  .notes summary { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .notes textarea { width: 100%; min-height: 60px; margin-top: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 8px; border-radius: 4px; }
+  .section-head { display: flex; justify-content: space-between; align-items: center; margin: 22px 0 8px; }
+  .section-head .label { margin: 0; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #2e2e2e; color: var(--text); padding: 10px 16px; border-radius: 4px; font-size: 14px; display: none; z-index: 50; max-width: 90vw; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
   @media (max-width: 600px) {
-    .predictions-hero { grid-template-columns: 1fr; }
-    .stat-value { font-size: 28px; }
-    .trade-table { font-size: 12px; }
-    .trade-table th, .trade-table td { padding: 8px; }
+    .funds { grid-template-columns: 1fr 1fr; row-gap: 12px; }
+    .funds > div:nth-child(3) { border-left: none; padding-left: 0; }
+    .trade input { width: 90px; min-height: 44px; }
+    .btn-sm { padding: 9px 12px; font-size: 13px; }
+    .seg button { padding: 10px 12px; }
   }
 </style>
+{% endblock %}
+{% block content %}
+{% macro rs(v) %}{{ "-" if v < 0 else "" }}₹{{ "{:,.2f}".format(v|abs) }}{% endmacro %}
+{% macro rs0(v) %}{{ "-" if v < 0 else "" }}₹{{ "{:,.0f}".format(v|abs) }}{% endmacro %}
 
-<div style="margin-bottom: 20px;">
-  <h2>Next-Day Trade Predictions</h2>
-  <p style="color: var(--muted); margin-top: 4px;">Paper trading portal — record your positions, track wins/losses, test signal predictions.</p>
+<h1>Paper trading</h1>
+
+<div class="card">
+  <div class="funds">
+    <div><div class="label" style="margin:0;">Account</div><div class="v">₹10,00,000</div><div class="s">paper money</div></div>
+    <div><div class="label" style="margin:0;">Open P&amp;L</div><div class="v {{ 'up' if stats.open_pnl > 0 else 'down' if stats.open_pnl < 0 }}">{{ rs0(stats.open_pnl) }}</div><div class="s">{{ stats.open_trades }} open · {{ stats.pending_orders }} waiting</div></div>
+    <div><div class="label" style="margin:0;">Booked P&amp;L</div><div class="v {{ 'up' if stats.total_pnl > 0 else 'down' if stats.total_pnl < 0 }}">{{ rs0(stats.total_pnl) }}</div><div class="s">{{ stats.closed_trades }} closed</div></div>
+    <div><div class="label" style="margin:0;">Win rate</div><div class="v">{{ (stats.win_rate ~ "%") if stats.win_rate is not none else "—" }}</div>
+      <div class="s">{% if scorecard.scored %}range hit {{ scorecard.inside_pct }}% of {{ scorecard.scored }} calls{% else %}calls scored from tomorrow{% endif %}</div></div>
+  </div>
+  {% set lvl = posture.level %}
+  <div class="posture-line">
+    {% if grade %}<b class="{{ 'up' if grade == 'A' else 'down' if grade == 'C' }}">Market grade {{ grade }}</b> ·{% endif %}
+    <b class="{{ 'down' if lvl == 'DEFENSIVE' else 'up' if lvl == 'PRESS' }}">{{ {"DEFENSIVE": "Defensive", "CAUTIOUS": "Cautious", "PRESS": "Press"}.get(lvl, "Market") }}</b>
+    — {{ posture.risk_pct }}% risk per trade, up to {{ posture.max_positions }} positions. Using {{ slots_used }}.
+  </div>
 </div>
 
-{% if stats.closed_trades > 0 %}
-<div class="predictions-hero">
-  <div class="stat-box">
-    <div class="stat-value">{{ "%.1f"|format(stats.total_pnl) }}</div>
-    <div class="stat-label">Total P&L (closed)</div>
+{% if pending_trades or open_trades %}
+<div class="section-head" id="book"><div class="label">Positions</div></div>
+<div class="book">
+  {% for t in pending_trades %}
+  <div class="pos">
+    <div class="l">
+      <div class="t"><b>{{ t.ticker|sym }}</b> · buy {{ t.qty }} above {{ rs(t.entry_price) }} <span class="chip wait">waiting</span></div>
+      <div class="s">Stop {{ rs(t.stop) }} · target {{ rs(t.target) }} · placed {{ t.created_at|nicedate }} · expires after 10 sessions</div>
+      <details class="notes"><summary>{{ "Note" if t.notes else "Add note" }}</summary><textarea data-note="{{ t.id }}" placeholder="Why this trade?">{{ t.notes or "" }}</textarea></details>
+    </div>
+    <div class="r"><button class="btn-sm" data-action="delete" data-id="{{ t.id }}" data-label="Cancel">Cancel</button></div>
   </div>
-  <div class="stat-box">
-    <div class="stat-value">{{ "%.1f"|format(stats.avg_pnl_pct) }}%</div>
-    <div class="stat-label">Avg Return</div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-value">{{ stats.closed_trades }}</div>
-    <div class="stat-label">Closed Trades</div>
-  </div>
-</div>
-{% endif %}
-
-<h3 class="supporting">Setups to Review</h3>
-<!-- DEBUG: action_queue={{ action_queue|length if action_queue else 'EMPTY' }} -->
-{% if action_queue %}
-<div class="setup-list">
-  {% for setup in action_queue[:10] %}
-  <div class="setup-card">
-    <div class="setup-signal"><strong>{{ setup.symbol }}</strong> — {{ setup.action }}</div>
-    <div class="setup-reason">{{ setup.reason }}</div>
-    <div class="setup-actions">
-      <button class="btn-trade" onclick="placeTradeForm('{{ setup.symbol }}', 'BUY', '{{ setup.action }}')">Place BUY</button>
-      <button class="btn-trade" onclick="placeTradeForm('{{ setup.symbol }}', 'SELL', '{{ setup.action }}')">Place SELL</button>
+  {% endfor %}
+  {% for t in open_trades %}
+  <div class="pos">
+    <div class="l">
+      <div class="t"><b>{{ t.ticker|sym }}</b> · {{ t.side|lower }} {{ t.qty }} @ {{ rs(t.entry_price) }}</div>
+      <div class="s">LTP {{ rs(t.last_price if t.last_price is not none else t.entry_price) }}{% if t.last_price_date %} ({{ t.last_price_date|nicedate }}){% endif %}{% if t.stop is not none %} · stop {{ rs(t.stop) }} · {% if t.exit_rule == "trail21" %}exits on a close below the 21-day average{% else %}target {{ rs(t.target) }}{% endif %}{% endif %}</div>
+      <details class="notes"><summary>{{ "Note" if t.notes else "Add note" }}</summary><textarea data-note="{{ t.id }}" placeholder="Why this trade?">{{ t.notes or "" }}</textarea></details>
+    </div>
+    <div class="r">
+      <div class="pnl {{ 'up' if t.mtm_pnl > 0 else 'down' if t.mtm_pnl < 0 }}">{{ rs0(t.mtm_pnl) }}</div>
+      <button class="btn-sm" data-action="close" data-id="{{ t.id }}" data-label="Exit">Exit</button>
     </div>
   </div>
   {% endfor %}
 </div>
-{% else %}
-<div style="padding: 24px; text-align: center; color: var(--muted); background: var(--surface-2); border-radius: 8px;">
-  No active setups today. Check back after market hours.
-</div>
 {% endif %}
 
-{% if open_trades %}
-<div class="trades-section">
-  <h3 class="supporting">Open Trades</h3>
-  <table class="trade-table">
-    <thead>
-      <tr>
-        <th>Ticker</th>
-        <th>Side</th>
-        <th>Entry</th>
-        <th>Signal</th>
-        <th>Date</th>
-        <th>Action</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for trade in open_trades %}
-      <tr>
-        <td><strong>{{ trade.ticker }}</strong></td>
-        <td>{{ trade.side }}</td>
-        <td>₹{{ "%.2f"|format(trade.entry_price) }}</td>
-        <td style="font-size: 12px; color: var(--muted);">{{ trade.signal_type }}</td>
-        <td style="font-size: 12px;">{{ trade.entry_date[:10] }}</td>
-        <td>
-          <input type="number" placeholder="Exit price" id="exit_{{ trade.id }}" style="width: 80px; padding: 4px; font-size: 12px;" />
-          <button class="btn-trade" onclick="closeTrade({{ trade.id }})">Close</button>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="section-head"><div class="label">Setups</div></div>
+<div class="toolbar">
+  <form class="search" method="get" action="/predictions">
+    <input type="text" name="symbol" value="{{ search }}" placeholder="Any NSE stock, e.g. TITAN" autocomplete="off" autocapitalize="characters" aria-label="Get a setup for any NSE stock" />
+    <button class="btn btn-ghost" type="submit">Check</button>
+  </form>
+  {% if predictions %}
+  <select class="sort" id="sort" aria-label="Sort setups">
+    <option value="rs">Strongest RS</option>
+    <option value="reward">Best reward/risk</option>
+  </select>
+  {% endif %}
 </div>
+{% if search_error %}<div class="note">{{ search_error }}</div>{% endif %}
+{% if predictions %}
+<div class="seg" style="margin-bottom: 12px;" role="tablist">
+  <button data-filter="ready" class="active">Buy-ready {{ predictions|selectattr("tradeable")|list|length }}</button>
+  <button data-filter="screen">Screen {{ predictions|selectattr("source", "equalto", "screen")|list|length }}</button>
+  <button data-filter="pair">Pairs {{ predictions|selectattr("kind", "equalto", "pair")|list|length }}</button>
+  <button data-filter="watch">Watchlist {{ predictions|selectattr("on_watchlist")|list|length }}</button>
+  <button data-filter="all">All {{ predictions|length }}</button>
+</div>
+{% else %}
+<div class="empty-state">No setups tonight — nothing to do is also a decision. The list refreshes at 6:30 pm and 8:30 am.</div>
 {% endif %}
+
+<div id="pp-list">
+{% for p in predictions %}
+<div class="pp-card" data-i="{{ loop.index0 }}"
+     data-source="{{ 'pair' if p.kind == 'pair' else p.source }}" data-watch="{{ 1 if p.on_watchlist else 0 }}"
+     data-searched="{{ 1 if p.searched else 0 }}" data-ready="{{ 1 if p.tradeable else 0 }}"
+     data-rs="{{ p.rs_rank or 0 }}" data-reward="{{ ((p.target - p.entry) / (p.entry - p.stop))|abs if p.entry != p.stop else 0 }}">
+  {% if p.kind == "stock" %}
+    {% set st = {"IN BUY RANGE": ("Buy range", "good"), "BASING": ("Basing", "wait"), "EXTENDED": ("Extended", "bad"), "NO BASE YET": ("No base", "")}.get(p.setup.status, (p.setup.status, "")) %}
+    <div class="pp-head">
+      <div><a class="pp-sym" href="{{ p.link }}">{{ p.symbol|sym }}</a><span class="chip {{ st[1] }}">{{ st[0] }}{% if p.setup.vcp %} · VCP{% endif %}</span></div>
+      <div class="pp-px">₹{{ "{:,.2f}".format(p.last) }} {% if p.metrics and p.metrics.chg_pct is not none %}<span class="{{ 'up' if p.metrics.chg_pct > 0 else 'down' if p.metrics.chg_pct < 0 }}">{{ "%+.2f"|format(p.metrics.chg_pct) }}%</span>{% endif %}</div>
+    </div>
+    <div class="pp-sub">
+      {% if p.rs_rank %}RS {{ p.rs_rank }} · {% endif %}{% if p.searched %}your search · {% elif p.on_watchlist %}watchlist · {% endif %}{{ p.metrics.pct_from_high }}% from high · {{ "%+.0f"|format(p.metrics.pct_above_50) if p.metrics.pct_above_50 is not none else "—" }}% vs 50-day{% if p.review %} · review {{ p.review.score }}/100{% endif %}
+    </div>
+    {% if p.setup.status == "BASING" and not p.tradeable %}<div class="note">{{ p.setup.pct_to_pivot }}% below its {{ rs(p.setup.pivot) }} pivot — not near a buy point yet.</div>
+    {% elif p.setup.status == "BASING" %}<div class="note plan">Buys only above {{ rs(p.entry) }}, {{ p.setup.pct_to_pivot }}% up, out of a {{ p.setup.base_bars }}-day base.</div>
+    {% elif p.setup.status == "IN BUY RANGE" %}<div class="note plan">{{ p.setup.pct_past_pivot }}% past its {{ rs(p.setup.pivot) }} pivot — inside the 5% buy range.</div>
+    {% elif p.setup.status == "EXTENDED" %}<div class="note">Extended — wait for a new base rather than chase.</div>
+    {% else %}<div class="note">No tight base yet.</div>{% endif %}
+    {% if p.results_in_hold %}<div class="note">Results {{ p.results_date|nicedate }} — inside a normal hold.</div>{% endif %}
+    {% if p.wide_stop %}<div class="note">Stop {{ p.stop_pct }}% away — wider than Minervini's 8% ceiling.</div>{% endif %}
+    <div class="levels">
+      <div><div class="k">{{ "Buy above" if p.order == "STOP" else "Entry" }}</div><div class="v">{{ rs(p.entry) }}</div></div>
+      <div><div class="k"><span class="term" title="1.5 × average daily range (ATR {{ p.atr }}) below entry">Stop</span></div><div class="v">{{ rs(p.stop) }}</div></div>
+      <div><div class="k"><span class="term" title="Fixed exit: 2R, twice the distance to the stop. With 'let it run' there's no fixed target.">Target (2R)</span></div><div class="v">{{ rs(p.target) }}</div></div>
+    </div>
+    {% if p.next_low %}<div class="proj"><span class="term" title="About 2 closes in 3 land inside this range (checked on 15 years of NSE data). It says nothing about direction.">Likely range</span>: next session {{ rs(p.next_low) }} – {{ rs(p.next_high) }} · 1 week {{ rs(p.week_low) }} – {{ rs(p.week_high) }}</div>{% endif %}
+    {% if history %}<div class="proj"><span class="term" title="{{ history.n }} NSE breakouts since 2012 in grade-{{ grade }} markets: decided at the close, bought next open, 1.5×ATR stop, after costs.">History</span>: in grade-{{ grade }} markets breakouts like this reached 2R first {{ (history.hit_2r * 100)|round|int }}% of the time; letting winners run averaged {{ "%+.2f"|format(history.avg_r_trail) }}R.</div>{% endif %}
+    <details class="pp-chart-toggle" data-chart="{{ loop.index0 }}"><summary>Chart ›</summary><div class="pp-chart" id="chart-{{ loop.index0 }}"></div></details>
+    <div class="trade">
+      <input type="number" inputmode="numeric" min="1" id="qty-{{ loop.index0 }}" value="{{ p.qty }}" data-qty="{{ loop.index0 }}" aria-label="Shares" {{ "disabled" if p.held or not p.tradeable }} />
+      <select class="exit-rule" id="rule-{{ loop.index0 }}" aria-label="Exit rule" {{ "disabled" if p.held or not p.tradeable }}>
+        <option value="trail21" selected>Let it run (21-day)</option>
+        <option value="target">Fixed 2R target</option>
+      </select>
+      <div class="cost" id="cost-{{ loop.index0 }}"></div>
+      {% if p.held %}<button class="btn" disabled>In your book</button>
+      {% elif not p.tradeable %}<button class="btn" disabled>{{ "Not near pivot" if p.setup.status == "BASING" else "No entry" }}</button>
+      {% else %}<button class="btn" id="btn-{{ loop.index0 }}" data-action="buy" data-i="{{ loop.index0 }}">{{ "Place order" if p.order == "STOP" else "Buy" }}</button>{% endif %}
+    </div>
+  {% else %}
+    {% set a_verb = "Buy" if p.side == "BUY" else "Sell" %}
+    {% set b_verb = {"Buy": "sell", "Sell": "buy"}[a_verb] %}
+    <div class="pp-head">
+      <div><a class="pp-sym" href="/pairs">{{ p.ticker_a|sym }} / {{ p.ticker_b|sym }}</a><span class="chip {{ 'good' if p.side == 'BUY' else 'bad' }}">{{ p.side|lower }} spread</span></div>
+      <div class="pp-px">z {{ "%+.2f"|format(p.zscore) }}</div>
+    </div>
+    <div class="pp-sub">{% if p.fno %}{{ a_verb }} 1 lot {{ p.ticker_a|sym }} fut (≈ ₹{{ "{:,.0f}".format(p.notional_a) }}), {{ b_verb }} {{ p.lots_b }} lot{{ "s" if p.lots_b != 1 }} {{ p.ticker_b|sym }} fut (≈ ₹{{ "{:,.0f}".format(p.notional_b) }}){% else %}No futures on one leg — reference only{% endif %}</div>
+    {% if p.near_stop %}<div class="note">Already next to its hard exit — likely to stop out unless it turns now.</div>{% endif %}
+    <div class="levels">
+      <div><div class="k"><span class="term" title="Price of {{ p.ticker_a|sym }} minus {{ '%.1f'|format(p.hedge_ratio) }} × {{ p.ticker_b|sym }}">Spread</span></div><div class="v">{{ rs(p.entry) }}</div></div>
+      <div><div class="k"><span class="term" title="Hard exit beyond 3.5σ">Stop</span></div><div class="v">{{ rs(p.stop) }}</div></div>
+      <div><div class="k"><span class="term" title="Exit back inside 0.5σ">Target</span></div><div class="v">{{ rs(p.target) }}</div></div>
+    </div>
+    <div class="proj">Usually halves the gap in ~{{ "%.0f"|format(p.half_life) }} sessions{% if p.expected_days %}; exit level in ~{{ p.expected_days }}{% endif %} · worth ≈ {{ rs0(p.expected_profit) }}</div>
+    <details class="pp-chart-toggle" data-chart="{{ loop.index0 }}"><summary>Chart ›</summary><div class="pp-chart" id="chart-{{ loop.index0 }}"></div></details>
+    <div class="trade">
+      <input type="hidden" id="qty-{{ loop.index0 }}" value="{{ p.qty }}" />
+      <div class="cost" id="cost-{{ loop.index0 }}"></div>
+      {% if p.held %}<button class="btn" disabled>In your book</button>
+      {% elif not p.tradeable %}<button class="btn" disabled>No futures</button>
+      {% else %}<button class="btn" id="btn-{{ loop.index0 }}" data-action="buy" data-i="{{ loop.index0 }}">{{ a_verb }} spread</button>{% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endfor %}
+</div>
+<button class="btn btn-ghost more" id="more" style="display: none;" data-action="more">Show more</button>
 
 {% if closed_trades %}
-<div class="trades-section">
-  <h3 class="supporting">Closed Trades</h3>
-  <table class="trade-table">
-    <thead>
-      <tr>
-        <th>Ticker</th>
-        <th>Side</th>
-        <th>Entry</th>
-        <th>Exit</th>
-        <th>P&L</th>
-        <th>Return %</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for trade in closed_trades %}
-      <tr>
-        <td><strong>{{ trade.ticker }}</strong></td>
-        <td>{{ trade.side }}</td>
-        <td>₹{{ "%.2f"|format(trade.entry_price) }}</td>
-        <td>₹{{ "%.2f"|format(trade.exit_price) }}</td>
-        <td class="{% if trade.pnl > 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
-          {{ "%.0f"|format(trade.pnl) if trade.pnl else "—" }}
-        </td>
-        <td class="{% if trade.pnl_pct > 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
-          {{ "%.1f"|format(trade.pnl_pct) if trade.pnl_pct else "—" }}%
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="section-head">
+  <div class="label">Closed</div>
+  <button class="btn-sm" data-action="delete-all" data-label="Clear all">Clear all</button>
+</div>
+<div class="book">
+  {% for t in closed_trades %}
+  <div class="pos">
+    <div class="l">
+      <div class="t"><b>{{ t.ticker|sym }}</b> · {{ t.side|lower }} {{ t.qty or 1 }} · {% if t.status == "expired" %}order at {{ rs(t.entry_price) }} not filled{% else %}{{ rs(t.entry_price) }} → {{ rs(t.exit_price) }}{% endif %}</div>
+      <div class="s">{{ t.exit_reason or "Closed" }} · {{ t.exit_date|nicedate }}{% if t.notes %} · “{{ t.notes }}”{% endif %}</div>
+    </div>
+    <div class="r">
+      {% if t.pnl is not none %}<div class="pnl {{ 'up' if t.pnl > 0 else 'down' if t.pnl < 0 }}">{{ rs0(t.pnl) }}{% if t.r_multiple is defined and t.r_multiple is not none %} <span class="muted" style="font-size: 12px;">{{ "%+.1f"|format(t.r_multiple) }}R</span>{% endif %}</div>{% endif %}
+      <button class="btn-sm" data-action="delete" data-id="{{ t.id }}" data-label="Delete">Delete</button>
+    </div>
+  </div>
+  {% endfor %}
 </div>
 {% endif %}
 
-<script>
-  function placeTradeForm(ticker, side, signal) {
-    const price = prompt(`Enter ${side} entry price for ${ticker}:`, "");
-    if (!price) return;
-    placeTrade(ticker, side, parseFloat(price), signal);
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="/static/js/lightweight-charts-4.2.3.js" nonce="{{ csp_nonce }}" defer></script>
+<script nonce="{{ csp_nonce }}">
+  const PREDS = {{ predictions | tojson }};
+  const fmt = v => '₹' + Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  const C = { text: '#999999', grid: '#2a2a2a', up: '#4caf50', down: '#e5534b', amber: '#d4a03d', blue: '#4184f3', line: '#e4e4e4' };
+
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.style.display = 'block';
+    clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = 'none'; }, 3000);
   }
 
-  function placeTrade(ticker, side, entry, signal) {
-    fetch('/api/place-trade', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `ticker=${encodeURIComponent(ticker)}&side=${side}&entry_price=${entry}&signal_type=${encodeURIComponent(signal)}`
-    })
-    .then(r => r.json())
-    .then(d => {
-      if (d.status === 'success') {
-        alert(`Trade placed: ${side} ${ticker} @ ₹${entry}`);
-        location.reload();
-      } else {
-        alert('Error: ' + d.msg);
-      }
-    });
+  function post(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }).then(r => r.json());
   }
 
-  function closeTrade(id) {
-    const exitEl = document.getElementById(`exit_${id}`);
-    const exit = parseFloat(exitEl.value);
-    if (!exit) { alert('Enter exit price'); return; }
-    fetch('/api/close-trade', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `trade_id=${id}&exit_price=${exit}`
-    })
-    .then(r => r.json())
-    .then(d => {
-      if (d.status === 'closed') {
-        alert(`Trade closed: P&L ₹${d.pnl.toFixed(0)} (${d.pnl_pct.toFixed(1)}%)`);
-        location.reload();
-      }
-    });
+  function updateCost(i) {
+    const p = PREDS[i], el = document.getElementById('cost-' + i);
+    if (!el) return;
+    const q = Math.max(0, parseInt(document.getElementById('qty-' + i).value) || 0);
+    const risk = Math.abs(p.entry - p.stop) * q, reward = Math.abs(p.target - p.entry) * q;
+    el.textContent = (p.kind === 'stock' ? `${q} sh · ${fmt(p.entry * q)} · ` : '') + `risk ${fmt(risk)} · reward ${fmt(reward)}`;
   }
+
+  function placeTrade(i, btn) {
+    const p = PREDS[i];
+    const q = parseInt(document.getElementById('qty-' + i).value) || 0;
+    if (q < 1) { toast('Enter how many shares first.'); return; }
+    btn.disabled = true; btn.textContent = 'Placing…';
+    const rule = (document.getElementById('rule-' + i) || {}).value || 'target';
+    post('/api/place-trade', `symbol=${encodeURIComponent(p.symbol)}&qty=${q}&exit_rule=${rule}`).then(d => {
+      if (d.status === 'success') { toast(p.order === 'STOP' ? `Order placed — buys only above ₹${p.entry}` : 'Paper trade placed'); setTimeout(() => location.reload(), 800); }
+      else { toast(d.msg || 'Could not place that trade.'); btn.disabled = false; btn.textContent = 'Try again'; }
+    }).catch(() => { toast('Could not reach the server — check the Wi-Fi.'); btn.disabled = false; btn.textContent = 'Try again'; });
+  }
+
+  // Destructive actions take two taps: the first arms the button, the second acts.
+  function armed(btn) {
+    if (btn.classList.contains('confirm')) return true;
+    btn.classList.add('confirm'); btn.textContent = 'Confirm';
+    setTimeout(() => { btn.classList.remove('confirm'); btn.textContent = btn.dataset.label; }, 4000);
+    return false;
+  }
+
+  function act(btn) {
+    const a = btn.dataset.action, id = btn.dataset.id;
+    if (a === 'buy') return placeTrade(+btn.dataset.i, btn);
+    if (a === 'more') { shown += 10; return applyView(); }
+    if (!armed(btn)) return;
+    btn.disabled = true;
+    const done = (msg) => { toast(msg); setTimeout(() => location.reload(), 700); };
+    if (a === 'close') post('/api/close-trade', `trade_id=${id}`).then(d => done(d.status === 'closed' ? `Exited: ${d.pnl >= 0 ? 'profit' : 'loss'} ${fmt(Math.abs(d.pnl))}` : (d.msg || 'Could not exit.')));
+    if (a === 'delete') post('/api/delete-trade', `trade_id=${id}`).then(d => done(d.status === 'deleted' ? 'Removed' : (d.msg || 'Could not remove.')));
+    if (a === 'delete-all') post('/api/delete-closed-trades', '').then(() => done('Closed trades cleared'));
+  }
+
+  document.addEventListener('click', e => { const b = e.target.closest('button[data-action]'); if (b && !b.disabled) act(b); });
+  document.addEventListener('input', e => { if (e.target.dataset.qty !== undefined) updateCost(+e.target.dataset.qty); });
+  document.addEventListener('change', e => {
+    const id = e.target.dataset.note;
+    if (id) post('/api/trade-note', `trade_id=${id}&note=${encodeURIComponent(e.target.value)}`).then(() => toast('Note saved'));
+  });
+
+  const pts = arr => arr.map(a => ({ time: a[0], value: a[1] }));
+  function drawChart(i) {
+    const p = PREDS[i], el = document.getElementById('chart-' + i);
+    const chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth, height: el.clientHeight,
+      layout: { background: { color: 'transparent' }, textColor: C.text, fontSize: 11 },
+      grid: { vertLines: { visible: false }, horzLines: { color: C.grid } },
+      timeScale: { borderVisible: false }, rightPriceScale: { borderVisible: false },
+      handleScroll: { horzTouchDrag: true, vertTouchDrag: false, mouseWheel: false, pressedMouseMove: true }, handleScale: false,
+    });
+    const dashed = LightweightCharts.LineStyle.Dashed, quiet = { lastValueVisible: false, priceLineVisible: false };
+    let main;
+    if (p.kind === 'stock') {
+      main = chart.addCandlestickSeries({ upColor: C.up, downColor: C.down, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down, ...quiet });
+      main.setData(p.candles.map(c => ({ time: c[0], open: c[1], high: c[2], low: c[3], close: c[4] })));
+      chart.addLineSeries({ color: C.amber, lineWidth: 1, lineStyle: dashed, ...quiet }).setData(pts(p.path_high));
+      chart.addLineSeries({ color: C.amber, lineWidth: 1, lineStyle: dashed, ...quiet }).setData(pts(p.path_low));
+    } else {
+      main = chart.addLineSeries({ color: C.line, lineWidth: 1.5, ...quiet });
+      main.setData(pts(p.spread));
+      chart.addLineSeries({ color: C.amber, lineWidth: 1, ...quiet }).setData(pts(p.upper));
+      chart.addLineSeries({ color: C.amber, lineWidth: 1, ...quiet }).setData(pts(p.lower));
+    }
+    if (p.path_mid) chart.addLineSeries({ color: C.blue, lineWidth: 1.5, lineStyle: dashed, ...quiet }).setData(pts(p.path_mid));
+    main.createPriceLine({ price: p.target, color: C.up, lineWidth: 1, lineStyle: dashed, title: 'Target' });
+    main.createPriceLine({ price: p.stop, color: C.down, lineWidth: 1, lineStyle: dashed, title: 'Stop' });
+    main.createPriceLine({ price: p.entry, color: C.blue, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: p.kind === 'stock' ? 'Entry' : 'Now' });
+    const bars = (p.kind === 'stock' ? p.candles : p.spread).length, ahead = Math.max(0, ((p.kind === 'stock' ? p.path_high : p.path_mid) || []).length - 1);
+    chart.timeScale().setVisibleLogicalRange({ from: bars - (p.kind === 'stock' ? 40 : 70), to: bars + ahead + 1 });
+  }
+  const drawn = new Set();
+  document.querySelectorAll('details[data-chart]').forEach(d => d.addEventListener('toggle', () => {
+    const i = +d.dataset.chart;
+    if (d.open && !drawn.has(i) && window.LightweightCharts) { drawn.add(i); drawChart(i); }
+  }));
+
+  let filter = 'ready', shown = 10;
+  const list = document.getElementById('pp-list');
+  const cards = [...document.querySelectorAll('.pp-card')];
+  function applyView() {
+    const key = (document.getElementById('sort') || {}).value || 'rs';
+    const match = c => c.dataset.searched === '1' || filter === 'all'
+      || (filter === 'watch' ? c.dataset.watch === '1' : filter === 'ready' ? c.dataset.ready === '1' : c.dataset.source === filter);
+    const sorted = cards.slice().sort((a, b) =>
+      (b.dataset.searched - a.dataset.searched) || (b.dataset.ready - a.dataset.ready) || (parseFloat(b.dataset[key]) - parseFloat(a.dataset[key])));
+    let visible = 0;
+    sorted.forEach(c => {
+      list.appendChild(c);
+      const m = match(c);
+      c.style.display = m && visible < shown ? '' : 'none';
+      if (m) visible++;
+    });
+    const more = document.getElementById('more');
+    more.style.display = visible > shown ? '' : 'none';
+    more.textContent = `Show more (${visible - shown})`;
+  }
+  document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.seg button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active'); filter = b.dataset.filter; shown = 10; applyView();
+  }));
+  const sortEl = document.getElementById('sort');
+  if (sortEl) sortEl.addEventListener('change', () => { shown = 10; applyView(); });
+
+  PREDS.forEach((_, i) => updateCost(i));
+  applyView();
 </script>
 {% endblock %}

@@ -1,0 +1,36 @@
+{
+ "generated": "2026-10-04",
+ "period": "2012-01-19 to 2026-09-30",
+ "breadth_ok": 0.6,
+ "method": "NSE daily bhavcopy 2011+, liquid stocks (\u2265\u20b95cr turnover, \u2265\u20b930), pivot breakouts from 10-65 session bases \u226435% deep; decide at close, enter next open; 1.5\u00d7ATR stop; 0.25% costs.",
+ "grades": {
+  "ALL": {
+   "n": 20535,
+   "hit_2r": 0.279,
+   "avg_r_fixed": -0.063,
+   "avg_r_trail": -0.001,
+   "share_of_time": 1.0
+  },
+  "A": {
+   "n": 11370,
+   "hit_2r": 0.292,
+   "avg_r_fixed": -0.043,
+   "avg_r_trail": 0.052,
+   "share_of_time": 0.554
+  },
+  "B": {
+   "n": 6407,
+   "hit_2r": 0.268,
+   "avg_r_fixed": -0.081,
+   "avg_r_trail": -0.056,
+   "share_of_time": 0.312
+  },
+  "C": {
+   "n": 2758,
+   "hit_2r": 0.249,
+   "avg_r_fixed": -0.107,
+   "avg_r_trail": -0.096,
+   "share_of_time": 0.134
+  }
+ }
+}

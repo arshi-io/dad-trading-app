@@ -2,322 +2,190 @@
 {% block title %}Minervini Screen — Papa Terminal{% endblock %}
 {% block extra_head %}
 <style>
-  .screen-summary {
-    display: flex; gap: 28px; flex-wrap: wrap;
-    margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--border);
-  }
-  .summary-stat .num { font-size: 26px; font-weight: 700; }
-  .summary-stat .label { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+  .screen-summary { display: grid; grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; }
+  .summary-stat { padding: 2px 14px 2px 0; }
+  .summary-stat + .summary-stat { padding-left: 14px; border-left: 1px solid var(--border); }
+  .summary-stat .num { font-size: 20px; font-weight: 500; }
+  .summary-stat .label { margin: 0; }
+  .tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .seg a { color: var(--muted); font-size: 13px; padding: 7px 12px; }
+  .seg a + a { border-left: 1px solid var(--border); }
+  .seg a.active { background: var(--surface-2); color: var(--text); font-weight: 600; }
+  .seg a:hover { text-decoration: none; color: var(--text); }
+  .tools input { flex: 1; min-width: 160px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 7px 12px; border-radius: 4px; }
+  .tools select { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 13px; padding: 7px 8px; border-radius: 4px; }
+  .count { color: var(--muted-2); font-size: 12px; }
 
-  /* day-over-day diff badges + RS delta */
-  .diff-badge { font-size: 12px; padding: 3px 9px; margin-left: 8px; vertical-align: middle; }
-  .rs-delta { font-family: var(--font-mono); font-size: 13px; font-weight: 700; margin-left: 6px; }
-  .rs-delta.up { color: var(--green); }
-  .rs-delta.down { color: var(--red); }
+  .vcp-row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; font-size: 14px; }
+  .vcp-row:last-child { border-bottom: none; }
+  .vcp-sym { font-weight: 600; color: var(--text); }
+  .vcp-meta { color: var(--muted); font-size: 13px; }
 
-  .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-  table { width: 100%; border-collapse: collapse; }
-  thead th {
-    background: var(--surface-2);
-    text-align: left; padding: 12px 16px;
-    color: var(--muted); font-size: 13px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.05em;
-    border-bottom: 1px solid var(--border);
-  }
-  .row-num { width: 48px; color: var(--muted-2); }
-  tbody tr.data-row:nth-child(even) { background: rgba(255,255,255,0.015); }
-  tbody tr.data-row:hover { background: var(--surface-2); }
-  .row-details { display: contents; }
-  .row-summary { padding: 0; }
-  .row-summary summary {
-    display: grid;
-    grid-template-columns: 48px 1.4fr 90px 180px 90px 130px;
-    align-items: center;
-    padding: 13px 16px;
-    gap: 10px;
-  }
-  .symbol-cell { font-family: var(--font-mono); font-weight: 700; font-size: 17px; display: flex; align-items: center; gap: 10px; }
-  .chevron { font-size: 15px; }
-  .row-link {
-    font-size: 14px; text-decoration: none; white-space: nowrap; justify-self: end;
-    padding: 14px 4px; margin: -14px -4px; /* comfortable Android tap target without disturbing row layout */
-  }
-  .row-link:hover { text-decoration: underline; }
-
-  .rs-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 42px; padding: 4px 9px;
-    border-radius: 7px; font-family: var(--font-mono); font-weight: 700; font-size: 15px;
-    border: 1px solid var(--border-strong); color: var(--muted);
-  }
-  .rs-badge.strong { background: var(--green-dim); border-color: var(--green); color: var(--green); }
-  .rs-badge.pass   { background: transparent; border-color: var(--green); color: var(--green); }
-
-  .conditions-cell { color: var(--muted); font-family: var(--font-mono); font-size: 15px; }
-
-  .stance-cell { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
-  .stance-reason { color: var(--muted); font-size: 12px; line-height: 1.3; }
-
-  .row-expand-cell { padding: 0 16px 22px 16px; }
-  .row-detail-loading { color: var(--muted); padding: 14px 20px; font-size: 15px; }
-  .row-expand-inner { padding: 18px 20px; background: var(--surface-2); border-radius: 10px; border: 1px solid var(--border); }
-
-  .why-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
-  .why-text { color: var(--muted); font-size: 15px; }
-  .why-text strong { color: var(--text); font-weight: 600; }
-
-  .scorecard { display: flex; gap: 4px; margin-bottom: 18px; }
-  .scorecard-seg { flex: 1; height: 8px; border-radius: 4px; background: var(--border-strong); }
+  .stock-list { border-top: 1px solid var(--border); }
+  .srow { border-bottom: 1px solid var(--border); }
+  .srow summary { padding: 11px 2px; }
+  .srow summary:hover { background: var(--surface); }
+  .srow-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .srow-name { font-size: 15px; font-weight: 600; }
+  .srow-co { color: var(--muted-2); font-size: 12px; font-weight: 400; margin-left: 6px; }
+  .srow-price { font-size: 14px; white-space: nowrap; }
+  .srow-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 5px 0 3px; align-items: center; }
+  .srow-facts { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--muted-2); }
+  .srow-facts b { color: var(--muted); font-weight: 500; }
+  .row-expand-cell { padding: 0 2px 12px; }
+  .row-detail-loading { color: var(--muted); font-size: 13px; }
+  .row-expand-inner { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; }
+  .why-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .why-text { color: var(--muted); font-size: 13px; }
+  .scorecard { display: flex; gap: 3px; margin-bottom: 10px; }
+  .scorecard-seg { flex: 1; height: 3px; border-radius: 2px; background: var(--border-strong); }
   .scorecard-seg.on { background: var(--green); }
-
-  .check-row { display: flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
-  .check-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .check-row:first-child { padding-top: 0; }
-  .check-badge {
-    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 14px; margin-top: 1px;
-  }
-  .check-row.pass .check-badge { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
-  .check-row.fail .check-badge { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
-  .check-label { font-weight: 600; }
-  .check-detail { color: var(--muted); font-size: 15px; font-family: var(--font-mono); margin-top: 3px; }
-
-  .vcp-section { margin-top: 28px; }
-  .vcp-label { color: var(--muted); font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
-
-  /* In-page filter -- deliberately NOT styled like the nav search (no
-     blue focus ring, pill shape, inline label) so it reads as "narrows
-     this table" rather than "go somewhere else". */
-  .filter-box {
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    background: var(--surface-2);
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    padding: 6px 8px 6px 20px;
-    margin-bottom: 20px;
-  }
-  .filter-label { color: var(--muted); font-size: 15px; white-space: nowrap; font-weight: 600; }
-  .filter-box input[type="text"] {
-    flex: 1; min-width: 160px;
-    background: transparent; border: none; color: var(--text);
-    font-family: var(--font-sans); font-size: 17px; padding: 10px 6px; outline: none;
-  }
-  .filter-box input[type="text"]::placeholder { color: var(--muted-2); }
-  .filter-count {
-    color: var(--muted); font-size: 14px; white-space: nowrap;
-    background: var(--surface); border-radius: 999px; padding: 8px 14px;
-  }
-
-  @media (max-width: 720px) {
-    .row-summary summary { grid-template-columns: 32px 1fr 70px; }
-    .conditions-cell { display: none; }
-    .row-link { display: none; }
-    .filter-label { display: none; }
-  }
-
-  /* Phone: 500 rows in a rigid table just doesn't work below 600px -- each
-     stock becomes its own card (block layout throughout; table-layout:fixed
-     alone still left a real overflow, measured 512px content in a 356px
-     table-wrap that its own overflow:hidden then silently clipped). Summary
-     + expanded panel share one continuous card outline instead of two
-     separately-bordered pieces. */
+  .check-row { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .check-row:last-child { border-bottom: none; }
+  .check-badge { flex-shrink: 0; width: 16px; font-size: 13px; font-weight: 600; }
+  .check-row.pass .check-badge { color: var(--green); } .check-row.fail .check-badge { color: var(--red); }
+  .check-label { font-size: 13px; }
+  .check-detail { color: var(--muted); font-size: 12px; }
   @media (max-width: 600px) {
-    .table-wrap { border: none; border-radius: 0; overflow: visible; background: transparent; }
-    table, tbody, tr.data-row, td.row-summary { display: block; width: 100%; }
-    thead { display: none; }
-    tbody tr.data-row { margin-bottom: 14px; }
-    tbody tr.data-row:last-child { margin-bottom: 0; }
-    tbody tr.data-row:nth-child(even) { background: transparent; }
-    tbody tr.data-row:hover { background: transparent; }
-
-    .row-summary summary {
-      display: flex; flex-wrap: wrap; align-items: center;
-      gap: 10px 10px; padding: 16px;
-      background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
-    }
-    details[open] .row-summary summary { border-radius: 12px 12px 0 0; }
-
-    .symbol-cell { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; row-gap: 6px; }
-    .rs-badge { flex-shrink: 0; }
-    .stance-cell { flex: 1 0 100%; }
-    .row-link { display: none; }
-    .row-num { display: none; }
-
-    /* re-shown (hidden at the 720px tier above) as its own labeled line --
-       "8 / 8" alone meant something under the old table header; standalone
-       in a card it needs the word next to it. */
-    .conditions-cell {
-      display: block; flex: 1 0 100%;
-      font-size: 15px; color: var(--muted); font-family: var(--font-sans);
-    }
-    .conditions-cell::before { content: "Conditions passed: "; }
-
-    .row-expand-cell { padding: 0; margin: -1px 0 0 0; }
-    .row-expand-inner { border-radius: 0 0 12px 12px; border-top: none; }
-
-    .diff-badge { font-size: 13px; }
-    .rs-delta { font-size: 14px; }
-    .stance-reason { font-size: 14px; }
-    .filter-count { font-size: 15px; }
-    .why-text, .check-detail, .vcp-label { font-size: 16px; }
-    .why-row { flex-direction: column; align-items: stretch; }
-    .why-row .btn { width: 100%; justify-content: center; min-height: 48px; }
+    .screen-summary { grid-template-columns: 1fr 1fr; row-gap: 10px; }
+    .summary-stat:nth-child(3) { border-left: none; padding-left: 0; }
+    .seg a { padding: 10px 12px; }
   }
 </style>
 {% endblock %}
 {% block content %}
-<h1>Minervini Trend Template</h1>
+<h1>Minervini screen</h1>
+
+{% set status_word = {"IN BUY RANGE": ("Buy range", "good"), "BASING": ("Basing", "wait"), "EXTENDED": ("Extended", "bad"), "NO BASE YET": ("No base", "")} %}
+
+<div class="screen-summary">
+  <div class="summary-stat"><div class="num">{{ counts.passing }}</div><div class="label">Pass 8 of 8</div></div>
+  <div class="summary-stat"><div class="num up">{{ counts.buy_range }}</div><div class="label">In buy range</div></div>
+  <div class="summary-stat"><div class="num">{{ counts.near_pivot }}</div><div class="label">Near pivot</div></div>
+  <div class="summary-stat"><div class="num">+{{ changes.new|length if changes.new else 0 }} / −{{ dropped|length }}</div><div class="label">New / dropped</div></div>
+</div>
+
+{% if vcp %}
+<div class="card">
+  <div class="label">VCP watch</div>
+  <p class="vcp-meta">Each pullback smaller than the last, volume drying up. Algorithm-detected — verify on the chart.</p>
+  {% for item in vcp %}
+  <div class="vcp-row">
+    <div>
+      <a class="vcp-sym" href="/stock/{{ item.symbol }}">{{ item.symbol|sym }}</a>
+      <span class="vcp-meta">· RS {{ item.rs_rank }} · {{ item.setup.base_bars }}-day base, pullbacks {{ item.setup.contractions|join("% → ") }}%</span>
+    </div>
+    <div class="vcp-meta">
+      {% if item.setup.status == "IN BUY RANGE" %}<span class="up">Broke out above ₹{{ "{:,.2f}".format(item.setup.pivot) }}</span>
+      {% else %}Buy above <b style="color: var(--text); font-weight: 500;">₹{{ "{:,.2f}".format(item.setup.pivot) }}</b> ({{ item.setup.pct_to_pivot }}% away){% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="tools">
+  <div class="seg">
+    <a class="{{ 'active' if view == 'pass' }}" href="/screen">Passing {{ counts.passing }}</a>
+    <a class="{{ 'active' if view == 'close' }}" href="/screen?view=close">7 of 8 · {{ counts.close }}</a>
+    <a class="{{ 'active' if view == 'all' }}" href="/screen?view=all">All {{ counts.all }}</a>
+  </div>
+  <input id="minervini-filter" type="text" autocomplete="off" placeholder="Filter by symbol, company or sector…" aria-label="Filter the list" />
+  <select id="sort" aria-label="Sort">
+    <option value="rs">Strongest RS</option>
+    <option value="pivot">Closest to a buy point</option>
+    <option value="high">Closest to 52-week high</option>
+    <option value="chg">Best day</option>
+  </select>
+  <span id="minervini-filter-count" class="count">{{ items|length }} shown</span>
+</div>
 
 {% if items %}
-{% set passed_items = items | selectattr('passed') | list %}
-<div class="screen-summary">
-  <div class="summary-stat">
-    <div class="num mono">{{ items | length }}</div>
-    <div class="label">Stocks screened</div>
-  </div>
-  <div class="summary-stat">
-    <div class="num mono word-good">{{ passed_items | length }}</div>
-    <div class="label">Stage 2 (8/8)</div>
-  </div>
-  {% if dropped %}
-  <div class="summary-stat">
-    <div class="num mono word-bad" title="{{ dropped | join(', ') }}">{{ dropped | length }}</div>
-    <div class="label">Dropped since yesterday</div>
-  </div>
-  {% endif %}
-</div>
-
-<div class="filter-box">
-  <label for="minervini-filter" class="filter-label">Filter this list</label>
-  <input id="minervini-filter" type="text" autocomplete="off" placeholder="Symbol or company name&hellip;" aria-label="Filter the table below by symbol or company name" />
-  <span id="minervini-filter-count" class="filter-count">Showing all {{ items | length }}</span>
-</div>
-
-{% set condition_why = {
-  "price_above_sma150_sma200": "Confirms the stock trades above its medium- and long-term averages -- a basic sign the uptrend is intact, not just a short bounce.",
-  "sma150_above_sma200": "The medium-term average has overtaken the long-term one -- momentum is building, not fading.",
-  "sma200_trending_up": "The long-term average itself is rising, not flat or falling -- the base trend is genuinely up.",
-  "sma50_above_sma150_sma200": "All three averages are stacked short-above-medium-above-long -- the textbook Stage-2 alignment.",
-  "price_above_sma50": "Price is holding above its short-term average -- near-term strength, not just riding old momentum.",
-  "price_30pct_above_52wk_low": "Enough distance from the bottom to show this isn't a stock still basing or recovering from a crash.",
-  "price_within_25pct_of_52wk_high": "Close enough to its high to be a market leader, not a laggard limping along.",
-  "rs_rank_70_plus": "Outperformed most of the NIFTY 500 over the last 3/6/9/12 months -- genuine relative strength, not just moving with the market.",
-} %}
-{% set regime_words = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", "CHOPPY": "choppy market"} %}
-{% set regime_phrase = regime_words.get(regime, (regime or "market").lower()) %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr>
-      <th class="row-num">#</th>
-      <th>Stock</th>
-      <th><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99. Higher is stronger.">RS Rank</span></th>
-      <th>Status</th>
-      <th>Conditions</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for item in items %}
-    {% set d = diffs.get(item.symbol) if diffs else none %}
-    <tr class="data-row" data-symbol="{{ item.symbol }}">
-      <td colspan="5" class="row-summary">
-        <details class="row-details">
-          <summary>
-            <span class="row-num mono">{{ loop.index }}</span>
-            <span class="symbol-cell">
-              <span class="chevron">&#9656;</span>{{ item.symbol }}
-              {% if d and d.badge %}
-              <span class="chip {{ d.badge_class }} diff-badge" title="{{ d.detail if d.detail else 'New in this screen since yesterday' }}">{{ d.badge }}{% if d.detail %} {{ d.detail }}{% endif %}</span>
-              {% endif %}
-              {% if d and d.rs_delta and d.rs_delta != 0 %}
-              <span class="rs-delta {{ 'up' if d.rs_delta > 0 else 'down' }}">{{ "↑" if d.rs_delta > 0 else "↓" }}{{ d.rs_delta | abs }}</span>
-              {% endif %}
-            </span>
-            <span class="rs-badge {{ 'strong' if item.rs_rank is not none and item.rs_rank >= 90 else ('pass' if item.rs_rank is not none and item.rs_rank >= 70 else '') }}" title="RS rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span>
-            {% set stance_label = "NO SETUP" if item.stance == "AVOID / NO SETUP" else (item.stance or "—") %}
-            {% set stance_cls = "neutral" if item.stance == "AVOID / NO SETUP" else (item.stance_class or "neutral") %}
-            <span class="stance-cell">
-              <span class="chip {{ stance_cls }}">{{ stance_label }}</span>
-              {% if item.passed and item.stance_class == "wait" %}
-              <span class="stance-reason">strong setup, {{ regime_phrase }}</span>
-              {% endif %}
-            </span>
-            <span class="conditions-cell">{{ item.conditions_passed }} / 8</span>
-            <a class="row-link" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
-          </summary>
-          <div class="reveal row-expand-cell" data-detail-for="{{ item.symbol }}">
-            <div class="row-detail-loading">Loading checklist&hellip;</div>
-          </div>
-        </details>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="stock-list" id="stock-list">
+  {% for item in items %}
+  {% set d = diffs.get(item.symbol) if diffs else none %}
+  {% set s = item.setup or {} %}
+  {% set sw = status_word.get(s.status) %}
+  {% set res = results.get(item.symbol) %}
+  {% set pivot_dist = 0 if s.status == "IN BUY RANGE" else (s.pct_to_pivot if s.status == "BASING" else 999) %}
+  <details class="srow data-row" data-symbol="{{ item.symbol }}"
+           data-search="{{ (item.symbol|sym ~ ' ' ~ (names.get(item.symbol) or '') ~ ' ' ~ (item.sector or ''))|lower }}"
+           data-rs="{{ item.rs_rank or 0 }}" data-pivot="{{ pivot_dist }}" data-high="{{ item.pct_from_high if item.pct_from_high is not none else -999 }}" data-chg="{{ item.chg_pct or 0 }}">
+    <summary>
+      <div class="srow-top">
+        <div class="srow-name">{{ item.symbol|sym }}<span class="srow-co">{{ names.get(item.symbol) or "" }}</span></div>
+        {% if item.close is defined %}
+        <div class="srow-price">₹{{ "{:,.2f}".format(item.close) }} <span class="{{ 'up' if item.chg_pct > 0 else 'down' if item.chg_pct < 0 }}">{{ "%+.1f"|format(item.chg_pct) }}%</span></div>
+        {% endif %}
+      </div>
+      <div class="srow-tags">
+        <span class="chip {{ 'good' if (item.rs_rank or 0) >= 90 }}" title="Relative Strength rank: beat this % of the NIFTY 500 over 3/6/9/12 months">RS {{ item.rs_rank if item.rs_rank is not none else "—" }}</span>
+        {% if not item.passed %}<span class="chip">{{ item.conditions_passed }}/8</span>{% endif %}
+        {% if sw %}<span class="chip {{ sw[1] }}">{{ sw[0] }}{% if s.status == "BASING" %} · {{ s.pct_to_pivot }}% to pivot{% endif %}</span>{% endif %}
+        {% if s.vcp %}<span class="chip good">VCP</span>{% endif %}
+        {% if res %}<span class="chip wait">Results {{ res|nicedate }}</span>{% endif %}
+        {% if d and d.badge %}<span class="chip {{ d.badge_class }}">{{ d.badge }}</span>{% endif %}
+      </div>
+      {% if item.close is defined %}
+      <div class="srow-facts">
+        <span>From high <b>{{ item.pct_from_high }}%</b></span>
+        <span>50-day <b>{{ "%+.0f"|format(item.pct_above_50) if item.pct_above_50 is not none else "—" }}%</b></span>
+        <span>Vol <b>{{ item.vol_ratio }}×</b></span>
+        <span>{{ item.sector or "" }}</span>
+      </div>
+      {% endif %}
+    </summary>
+    <div class="row-expand-cell" data-detail-for="{{ item.symbol }}">
+      <div class="row-detail-loading">Loading checklist…</div>
+    </div>
+  </details>
+  {% endfor %}
 </div>
 {% else %}
-<div class="empty-state">No screen data yet — nothing to do is also a decision.</div>
+<div class="empty-state">Nothing in this view tonight — nothing to do is also a decision.</div>
 {% endif %}
 
-<div class="vcp-section">
-  <h2>VCP Watch</h2>
-  <div class="vcp-label">algorithm-detected — verify on chart</div>
-  <div class="empty-state">No VCP setups flagged yet — this screen is still being built out.</div>
-</div>
-
-{% if items %}
-<script>
-  // Each row's 8-point checklist is fetched the first time that row is
-  // opened, not shipped with the page (it was 84% of the HTML, all of it
-  // collapsed). Fetched once per row, then cached in the DOM.
-  document.addEventListener('DOMContentLoaded', function () {
-    document.querySelectorAll('details.row-details').forEach(function (details) {
-      details.addEventListener('toggle', function () {
-        if (!details.open) return;
-        const holder = details.querySelector('[data-detail-for]');
-        if (!holder || holder.dataset.loaded === '1' || holder.dataset.loading === '1') return;
-        holder.dataset.loading = '1';
-        fetch('/api/screen-row/' + encodeURIComponent(holder.dataset.detailFor))
-          .then(function (r) { return r.text(); })
-          .then(function (html) {
-            holder.innerHTML = html;
-            holder.dataset.loaded = '1';
-          })
-          .catch(function () {
-            holder.innerHTML = '<div class="row-expand-inner">Could not load the checklist — open Stock Room for the full view.</div>';
-          })
-          .finally(function () { holder.dataset.loading = '0'; });
-      });
+<script nonce="{{ csp_nonce }}">
+  document.querySelectorAll('details.srow').forEach(function (details) {
+    details.addEventListener('toggle', function () {
+      if (!details.open) return;
+      const holder = details.querySelector('[data-detail-for]');
+      if (!holder || holder.dataset.loaded === '1') return;
+      holder.dataset.loaded = '1';
+      fetch('/api/screen-row/' + encodeURIComponent(holder.dataset.detailFor))
+        .then(function (r) { return r.text(); })
+        .then(function (html) { holder.innerHTML = html; })
+        .catch(function () { holder.innerHTML = '<div class="row-expand-inner">Could not load the checklist — open Stock Room for the full view.</div>'; holder.dataset.loaded = ''; });
     });
   });
 
-  // Filters the table already on the page -- no navigation, no network call.
-  // Distinct from the nav search (which always goes to Stock Room).
-  document.addEventListener('DOMContentLoaded', function () {
-    const filterInput = document.getElementById('minervini-filter');
-    const countLabel = document.getElementById('minervini-filter-count');
-    if (!filterInput) return;
-
-    const rows = Array.from(document.querySelectorAll('.data-row'));
-    const nameBySymbol = {};
-    (typeof PAPA_TICKER_DIRECTORY !== 'undefined' ? PAPA_TICKER_DIRECTORY : []).forEach(function (t) {
-      nameBySymbol[t.symbol] = t.name;
-    });
-
-    filterInput.addEventListener('input', function () {
-      const q = filterInput.value.trim().toUpperCase();
+  (function () {
+    const list = document.getElementById('stock-list');
+    if (!list) return;
+    const rows = Array.from(list.children);
+    const input = document.getElementById('minervini-filter');
+    const sort = document.getElementById('sort');
+    const count = document.getElementById('minervini-filter-count');
+    function apply() {
+      const q = input.value.trim().toLowerCase();
+      const key = sort.value;
+      const asc = key === 'pivot';
+      const sorted = rows.slice().sort(function (a, b) {
+        const x = parseFloat(a.dataset[key]), y = parseFloat(b.dataset[key]);
+        return asc ? x - y : y - x;
+      });
       let shown = 0;
-      rows.forEach(function (row) {
-        const symbol = row.getAttribute('data-symbol') || '';
-        const name = (nameBySymbol[symbol] || '').toUpperCase();
-        const match = !q || symbol.includes(q) || name.includes(q);
-        row.style.display = match ? '' : 'none';
+      sorted.forEach(function (r) {
+        list.appendChild(r);
+        const match = !q || r.dataset.search.includes(q);
+        r.style.display = match ? '' : 'none';
         if (match) shown++;
       });
-      countLabel.textContent = q ? ('Showing ' + shown + ' of ' + rows.length) : ('Showing all ' + rows.length);
-    });
-  });
+      count.textContent = shown + ' shown';
+    }
+    input.addEventListener('input', apply);
+    sort.addEventListener('change', apply);
+  })();
 </script>
-{% endif %}
 {% endblock %}

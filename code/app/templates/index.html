@@ -2,308 +2,147 @@
 {% block title %}Today — Papa Terminal{% endblock %}
 {% block extra_head %}
 <style>
-  .regime-banner {
-    position: relative;
-    border-radius: 16px;
-    padding: 34px 30px;
-    margin-bottom: 24px;
-    border: 1px solid var(--border);
-    overflow: hidden;
-  }
-  .regime-banner::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; }
-  .regime-banner.good { background: linear-gradient(120deg, var(--green-dim), var(--surface) 70%); }
-  .regime-banner.good::before { background: var(--green); }
-  .regime-banner.bad  { background: linear-gradient(120deg, var(--red-dim), var(--surface) 70%); }
-  .regime-banner.bad::before  { background: var(--red); }
-  .regime-banner.wait { background: linear-gradient(120deg, var(--amber-dim), var(--surface) 70%); }
-  .regime-banner.wait::before { background: var(--amber); }
-  .regime-label { font-size: 36px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; }
-  .regime-sub { color: var(--muted); font-size: 17px; margin-top: 10px; }
+  .market-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .market-state { font-size: 18px; font-weight: 600; }
+  .market-note { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); }
+  .stat { padding: 14px 16px 2px 0; }
+  .stat + .stat { padding-left: 16px; border-left: 1px solid var(--border); }
+  .stat .v { font-size: 20px; font-weight: 500; }
+  .stat .s { font-size: 12px; color: var(--muted); }
 
-  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
-  .tile { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--border-strong); border-radius: 12px; padding: 20px 22px; }
-  .tile.good { border-top-color: var(--green); }
-  .tile.bad  { border-top-color: var(--red); }
-  .tile-label { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
-  .tile-value { font-size: 30px; font-weight: 700; }
+  .list { border-top: 1px solid var(--border); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); color: inherit; }
+  .row:last-child { border-bottom: none; }
+  a.row:hover { text-decoration: none; background: var(--surface-2); margin: 0 -20px; padding: 12px 20px; }
+  .row .main { min-width: 0; flex: 1; }
+  .row .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row .sym { font-weight: 600; font-size: 15px; }
+  .row .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .row .right { text-align: right; white-space: nowrap; font-size: 14px; }
+  .row .go { color: var(--muted-2); font-size: 18px; }
 
-  .briefing-card { border-left: 4px solid var(--blue); }
-  .briefing-list { list-style: none; padding: 0; margin: 0; counter-reset: briefing; }
-  .briefing-list li {
-    counter-increment: briefing;
-    display: flex; gap: 14px; align-items: flex-start;
-    padding: 12px 0; border-bottom: 1px solid var(--border);
-  }
-  .briefing-list li:last-child { border-bottom: none; padding-bottom: 0; }
-  .briefing-list li:first-child { padding-top: 0; }
-  .briefing-list li::before {
-    content: counter(briefing);
-    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
-    background: var(--surface-2); color: var(--muted);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 700; font-family: var(--font-mono);
-    margin-top: 2px;
-  }
+  .brief { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
+  .brief li { padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; color: #cfcfcf; }
+  .brief li:last-child { border-bottom: none; }
 
-  .queue-item {
-    display: flex; justify-content: space-between; align-items: center; gap: 16px;
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
-    padding: 16px 18px; margin-bottom: 12px; flex-wrap: wrap;
-  }
-  .queue-item:last-child { margin-bottom: 0; }
-  .queue-left { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
-  .queue-symbol-row { display: flex; align-items: center; gap: 10px; }
-  .queue-symbol { font-family: var(--font-mono); font-weight: 700; font-size: 18px; }
-  .queue-reason { color: var(--muted); font-size: 15px; }
-
-  .watchlist-row {
-    display: flex; justify-content: space-between; align-items: center; gap: 16px;
-    padding: 14px 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
-  }
-  .watchlist-row:last-child { border-bottom: none; }
-  .watchlist-symbol { font-family: var(--font-mono); font-weight: 700; font-size: 17px; min-width: 130px; }
-  .watchlist-change { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .watchlist-arrow { font-size: 20px; font-weight: 800; width: 20px; text-align: center; }
-  .watchlist-arrow.good { color: var(--green); }
-  .watchlist-arrow.bad { color: var(--red); }
-  .watchlist-arrow.neutral { color: var(--muted-2); }
-  .watchlist-nochange { color: var(--muted-2); font-size: 14px; width: auto; font-weight: 400; }
-  .watchlist-remove-form { margin: 0; }
-  .watchlist-remove {
-    background: transparent; border: 1px solid var(--border-strong); color: var(--muted);
-    width: 32px; height: 32px; border-radius: 50%; font-size: 18px; line-height: 1; cursor: pointer;
-  }
-  .watchlist-remove:hover { color: var(--red); border-color: var(--red); }
-
-  .shortlist-card { border-left: 4px solid var(--green); }
-  .shortlist-row {
-    display: flex; align-items: center; gap: 16px;
-    padding: 14px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap;
-  }
-  .shortlist-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .shortlist-row:first-child { padding-top: 0; }
-  .shortlist-rank {
-    flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
-    background: var(--surface-2); color: var(--muted);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 700; font-family: var(--font-mono);
-  }
-  .shortlist-main { flex: 1; min-width: 220px; }
-  .shortlist-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
-  .shortlist-symbol { font-family: var(--font-mono); font-weight: 700; font-size: 17px; }
-  .shortlist-rs { color: var(--muted); font-size: 14px; }
-  .shortlist-rs .mono { color: var(--text); }
-  .shortlist-why { color: var(--muted); font-size: 14px; }
-  .stance-reason { color: var(--muted); font-size: 13px; }
-
-  .featured-card { border-left: 4px solid var(--green); border-width: 2px; }
-  .featured-note { color: var(--muted); font-size: 15px; margin: -4px 0 20px 0; max-width: 640px; }
-  .featured-row {
-    display: flex; align-items: flex-start; gap: 18px;
-    padding: 20px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap;
-  }
-  .featured-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .featured-row:first-child { padding-top: 0; }
-  .featured-rank {
-    flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
-    background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px; font-weight: 800; font-family: var(--font-mono);
-  }
-  .featured-main { flex: 1; min-width: 240px; }
-  .featured-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-  .featured-symbol { font-family: var(--font-mono); font-weight: 800; font-size: 21px; }
-  .featured-rs { color: var(--muted); font-size: 15px; }
-  .featured-rs .mono { color: var(--text); font-weight: 700; }
-  .featured-why { color: var(--muted); font-size: 15px; }
-  .featured-why strong { color: var(--text); font-weight: 600; }
-  .diff-badge { font-size: 12px; padding: 3px 9px; vertical-align: middle; }
-
+  .remove { background: none; border: none; color: var(--muted-2); font-size: 18px; width: 36px; height: 36px; cursor: pointer; }
+  .remove:hover { color: var(--red); }
   @media (max-width: 600px) {
-    /* 3 equal 1fr columns don't shrink below their content's intrinsic
-       width (e.g. "24055.80" at 30px) -- this is the actual cause of the
-       page-level horizontal overflow measured at this width, not the nav.
-       Stack instead, which is also what was asked for regardless. */
-    .tiles { grid-template-columns: 1fr; }
-    .regime-label { font-size: 28px; }
-
-    .tile-label, .watchlist-nochange, .shortlist-rs, .shortlist-why,
-    .stance-reason, .featured-rs, .featured-why, .featured-note {
-      font-size: 16px;
-    }
-
-    .watchlist-remove { width: 44px; height: 44px; font-size: 20px; }
-    .shortlist-row .btn, .featured-row .btn, .queue-item .btn { width: 100%; justify-content: center; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .stat:nth-child(3) { border-left: none; padding-left: 0; }
+    .stat:nth-child(n+3) { border-top: 1px solid var(--border); }
+    .remove { width: 44px; height: 44px; }
+    a.row:hover { margin: 0; padding: 12px 0; background: none; }
   }
 </style>
 {% endblock %}
 {% block content %}
+{% set state = {"TRENDING_UP": ("Uptrend", "up"), "TRENDING_DOWN": ("In correction", "down"), "CHOPPY": ("Choppy, no clear trend", "")}.get(regime, (regime, "")) %}
+{% set nifty = indices.nifty or {} %}
+{% set rally = market.rally or {} %}
 
-{% set regime_map = {
-  "TRENDING_UP": ("Market trending UP", "good"),
-  "TRENDING_DOWN": ("Market trending DOWN", "bad"),
-  "CHOPPY": ("Market CHOPPY — no clear trend", "wait"),
-} %}
-{% set regime_info = regime_map.get(regime, (regime, "wait")) %}
-{% set regime_words = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", "CHOPPY": "choppy market"} %}
-{% set regime_phrase = regime_words.get(regime, (regime or "market").lower()) %}
-{% set nifty = indices.nifty %}
-
-<div class="regime-banner {{ regime_info[1] }}">
-  <div class="regime-label">{{ regime_info[0] }}</div>
-  <div class="regime-sub">
-    NIFTY <span class="mono">{{ "%.2f"|format(nifty.close) if nifty and nifty.close is not none else "—" }}</span>
-    &nbsp;·&nbsp; Volatility <strong>{{ nifty.vol_state if nifty else "—" }}</strong>
-    &nbsp;·&nbsp; Breadth <span class="mono">{{ "%.1f"|format(nifty.breadth_pct) + "%" if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none else "—" }}</span> of stocks above 200DMA
-  </div>
-</div>
-
-<div class="tiles">
-  <div class="tile">
-    <div class="tile-label">NIFTY 50</div>
-    <div class="tile-value mono">{{ "%.2f"|format(nifty.close) if nifty and nifty.close is not none else "—" }}</div>
-  </div>
-  <div class="tile">
-    <div class="tile-label"><span class="term" title="How stretched the market's volatility is right now — HIGH means bigger daily swings, LOW means calmer trading.">Volatility</span></div>
-    <div class="tile-value">{{ nifty.vol_state if nifty else "—" }}</div>
-  </div>
-  <div class="tile {{ 'good' if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none and nifty.breadth_pct >= 50 else 'bad' if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none else '' }}">
-    <div class="tile-label"><span class="term" title="Percent of stocks trading above their own 200-day average — a broad health check beyond just the index price.">Breadth</span></div>
-    <div class="tile-value mono">
-      {{ "%.1f"|format(nifty.breadth_pct) + "%" if nifty and nifty.breadth_pct is defined and nifty.breadth_pct is not none else "—" }}
+<div class="card">
+  <div class="label">Market</div>
+  <div class="market-head"><span class="market-state {{ state[1] }}">{{ state[0] }}</span>
+    {% if market.grade %}<span class="chip {{ 'good' if market.grade == 'A' else 'bad' if market.grade == 'C' else 'wait' }}" title="A: breadth 60%+ and NIFTY above its 50-day. B: one of the two. C: neither. Since 2012, breakouts averaged +0.05R in A, −0.06R in B, −0.10R in C.">Grade {{ market.grade }}</span>{% endif %}
+    {% if market.breadth_200 is not none and market.breadth_200 is defined %}<span class="muted" style="font-size: 13px;">{{ (market.breadth_200 * 100)|round|int }}% of stocks above their 200-day</span>{% endif %}</div>
+  <div class="market-note">{{ posture.text }}</div>
+  <div class="stats">
+    <div class="stat">
+      <div class="label" style="margin: 0;">NIFTY 50</div>
+      <div class="v">{{ "{:,.2f}".format(nifty.close) if nifty.close is not none else "—" }}</div>
+      {% if nifty.chg_pct is defined and nifty.chg_pct is not none %}<div class="s {{ 'up' if nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nifty.chg_pct) }}%</div>{% endif %}
+    </div>
+    <div class="stat">
+      <div class="label" style="margin: 0;">From high</div>
+      <div class="v">{{ "%.1f"|format(market.pct_from_high) ~ "%" if market.pct_from_high is defined and market.pct_from_high is not none else "—" }}</div>
+      <div class="s">{{ "above" if market.above_200 else "below" }} 200-day avg</div>
+    </div>
+    <div class="stat">
+      <div class="label" style="margin: 0;"><span class="term" title="Days the index fell 0.2%+ on higher volume — big funds selling. 5+ in 25 sessions usually marks a top or correction.">Distribution</span></div>
+      <div class="v {{ 'down' if (market.distribution_days or 0) >= 5 }}">{{ market.distribution_days if market.distribution_days is not none else "—" }}</div>
+      <div class="s">days in 25 sessions</div>
+    </div>
+    <div class="stat">
+      <div class="label" style="margin: 0;"><span class="term" title="After a low, a day 4+ of the rally where the index rises 1.25%+ on higher volume confirms a new uptrend.">Follow-through</span></div>
+      <div class="v">{{ {"CONFIRMED": "Confirmed", "ATTEMPT": "Not yet", "AT LOW": "None"}.get(rally.state, "—") }}</div>
+      <div class="s">{% if rally.state == "CONFIRMED" %}on {{ rally.ftd_date|nicedate }}{% elif rally.state == "ATTEMPT" %}rally day {{ rally.day }}{% else %}index at its low{% endif %}</div>
     </div>
   </div>
 </div>
 
-{% set shortlist = (screen_items | selectattr('passed') | list | sort(attribute='rs_rank', reverse=true))[:6] %}
-{% set top_symbols = top_today | map(attribute='symbol') | list %}
-{% set remaining = shortlist | rejectattr('symbol', 'in', top_symbols) | list %}
-
-<div class="card featured-card">
-  <h2>Strongest setups to review</h2>
-  <p class="featured-note">Ranked by template pass, RS, and fit with today's regime — evidence for you to weigh, not a buy list. Each still opens the full briefing in Stock Room before you decide.</p>
-  {% if top_today %}
-  {% for item in top_today %}
-  {% set d = diffs.get(item.symbol) if diffs else none %}
-  {% set stance_label = "NO SETUP" if item.stance == "AVOID / NO SETUP" else (item.stance or "—") %}
-  {% set stance_cls = "neutral" if item.stance == "AVOID / NO SETUP" else (item.stance_class or "neutral") %}
-  <div class="featured-row">
-    <span class="featured-rank">{{ loop.index }}</span>
-    <div class="featured-main">
-      <div class="featured-top">
-        <a class="featured-symbol" href="/stock/{{ item.symbol }}">{{ item.symbol }}</a>
-        <span class="chip {{ stance_cls }}" style="font-size:15px; padding:6px 14px;">{{ stance_label }}</span>
-        {% if d and d.badge %}
-        <span class="chip {{ d.badge_class }} diff-badge" title="{{ d.detail if d.detail else 'New in the screen since yesterday' }}">{{ d.badge }}{% if d.detail %} {{ d.detail }}{% endif %}</span>
-        {% endif %}
-        {% if item.passed and item.stance_class == "wait" %}
-        <span class="stance-reason">strong setup, {{ regime_phrase }}</span>
-        {% endif %}
-        <span class="featured-rs"><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">RS</span> <span class="mono">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span></span>
+<div class="card">
+  <div class="label">Tomorrow's setups</div>
+  {% if setups %}
+  <div class="list">
+    {% for s in setups %}
+    <a class="row" href="{{ s.link }}">
+      <div class="main">
+        <div class="top">
+          <span class="sym">{{ s.symbol|sym|replace("/", " / ") }}</span>
+          <span class="chip {{ 'good' if s.action in ('BUY RANGE', 'SPREAD BUY') else 'bad' if s.action == 'SPREAD SELL' else 'wait' }}">{{ s.action|replace("SPREAD ", "") }}</span>
+          {% if s.rs_rank %}<span class="chip">RS {{ s.rs_rank }}</span>{% endif %}
+          {% if s.results_date %}<span class="chip wait">Results {{ s.results_date|nicedate }}</span>{% endif %}
+        </div>
+        <div class="sub">{{ s.reason }}{% if s.review %} · review {{ s.review.score }}/100{% endif %}</div>
       </div>
-      {% if item.stance_evidence %}
-      <div class="featured-why"><strong>Why it surfaced:</strong> {{ item.stance_evidence | join(' · ') }}</div>
-      {% endif %}
-    </div>
-    <a class="btn" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
+      <span class="go">›</span>
+    </a>
+    {% endfor %}
   </div>
-  {% endfor %}
   {% else %}
-  <div class="empty-state">No setups passed the screen today — nothing to do is also a decision.</div>
+  <div class="empty-state">Nothing is at a proper buy point tonight — nothing to do is also a decision.</div>
   {% endif %}
 </div>
 
-<div class="card shortlist-card">
-  <h2>Stocks to review today</h2>
-  {% if remaining %}
-  {% for item in remaining %}
-  <div class="shortlist-row">
-    <span class="shortlist-rank">{{ loop.index }}</span>
-    <div class="shortlist-main">
-      {% set stance_label = "NO SETUP" if item.stance == "AVOID / NO SETUP" else (item.stance or "—") %}
-      {% set stance_cls = "neutral" if item.stance == "AVOID / NO SETUP" else (item.stance_class or "neutral") %}
-      <div class="shortlist-top">
-        <a class="shortlist-symbol" href="/stock/{{ item.symbol }}">{{ item.symbol }}</a>
-        <span class="chip {{ stance_cls }}">{{ stance_label }}</span>
-        {% if item.passed and item.stance_class == "wait" %}
-        <span class="stance-reason">strong setup, {{ regime_phrase }}</span>
-        {% endif %}
-        <span class="shortlist-rs"><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">RS</span> <span class="mono">{{ item.rs_rank if item.rs_rank is not none else "—" }}</span></span>
-      </div>
-      {% if item.stance_evidence %}
-      <div class="shortlist-why">{{ item.stance_evidence | join(' · ') }}</div>
-      {% endif %}
-    </div>
-    <a class="btn btn-ghost" href="/stock/{{ item.symbol }}">Open Stock Room &rarr;</a>
-  </div>
-  {% endfor %}
-  {% elif shortlist %}
-  <div class="empty-state">The rest of today's qualifying setups are all featured above.</div>
-  {% else %}
-  <div class="empty-state">No setups passed the screen today — nothing to do is also a decision.</div>
-  {% endif %}
-</div>
-
-<div class="card briefing-card">
-  <h2>Morning Briefing</h2>
+<div class="card">
+  <div class="label">Briefing</div>
   {% if briefing %}
-  <ul class="briefing-list">
-    {% for item in briefing %}<li>{{ item.text }}</li>{% endfor %}
-  </ul>
+  <ul class="brief">{% for item in briefing %}<li>{{ item.text }}</li>{% endfor %}</ul>
   {% else %}
-  <div class="empty-state">No briefing yet — nothing to do is also a decision.</div>
+  <div class="empty-state">No briefing yet.</div>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Action Queue</h2>
-  {% if action_queue %}
-  {% for item in action_queue %}
-  <div class="queue-item">
-    <div class="queue-left">
-      <div class="queue-symbol-row">
-        <span class="queue-symbol">{{ item.symbol }}</span>
-        <span class="chip {{ 'good' if item.action == 'BUY' else ('bad' if item.action == 'SELL' else 'wait') }}">{{ item.action }}</span>
-      </div>
-      <div class="queue-reason">{{ item.reason }}</div>
-    </div>
-    <a class="btn" href="{{ item.link }}">{{ "Open Spread Trades" if item.link == "/pairs" else "Open Stock Room" }} &rarr;</a>
-  </div>
-  {% endfor %}
-  {% else %}
-  <div class="empty-state">No new signals — nothing to do is also a decision.</div>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h2>Dad's Watchlist</h2>
+  <div class="label">Watchlist</div>
   {% if watchlist_rows %}
-  {% for row in watchlist_rows %}
-  {% set today_label = "NO SETUP" if row.stance_today == "AVOID / NO SETUP" else (row.stance_today or "—") %}
-  {% set today_cls = "neutral" if row.stance_today == "AVOID / NO SETUP" else (row.stance_today_class or "neutral") %}
-  {% set yesterday_label = "NO SETUP" if row.stance_yesterday == "AVOID / NO SETUP" else (row.stance_yesterday or "—") %}
-  <div class="watchlist-row">
-    <a class="watchlist-symbol" href="/stock/{{ row.symbol }}">{{ row.symbol }}</a>
-    <div class="watchlist-change">
-      {% if row.arrow == "—" %}
-      <span class="chip {{ today_cls }}">{{ today_label }}</span>
-      <span class="watchlist-nochange">— no change</span>
-      {% else %}
-      <span class="chip neutral">{{ yesterday_label }}</span>
-      <span class="watchlist-arrow {{ row.arrow_class }}">{{ row.arrow }}</span>
-      <span class="chip {{ today_cls }}">{{ today_label }}</span>
+  <div class="list">
+    {% for row in watchlist_rows %}
+    {% set stance = "No setup" if row.stance_today == "AVOID / NO SETUP" else (row.stance_today or "—")|capitalize %}
+    <div class="row">
+      <a class="main" href="/stock/{{ row.symbol }}" style="color: inherit;">
+        <div class="sym">{{ row.symbol|sym }}</div>
+        <div class="sub">{{ stance }}{% if row.conditions is not none %} · {{ row.conditions }}/8{% endif %}{% if row.setup_status %} · {{ row.setup_status|lower }}{% endif %}{% if row.arrow != "—" %} · <span class="{{ 'up' if row.arrow_class == 'good' else 'down' }}">{{ "upgraded" if row.arrow_class == "good" else "downgraded" }}</span>{% endif %}</div>
+      </a>
+      {% if row.close %}
+      <div class="right">₹{{ "{:,.2f}".format(row.close) }}<div class="{{ 'up' if row.chg_pct > 0 else 'down' if row.chg_pct < 0 else 'muted' }}" style="font-size: 13px;">{{ "%+.2f"|format(row.chg_pct) }}%</div></div>
       {% endif %}
+      <form method="post" action="/api/watchlist/remove" style="margin: 0;">
+        <input type="hidden" name="symbol" value="{{ row.symbol }}">
+        <input type="hidden" name="next" value="/">
+        <button type="submit" class="remove" title="Remove {{ row.symbol|sym }}" aria-label="Remove {{ row.symbol|sym }} from the watchlist">&times;</button>
+      </form>
     </div>
-    <form method="post" action="/api/watchlist/remove" class="watchlist-remove-form">
-      <input type="hidden" name="symbol" value="{{ row.symbol }}">
-      <input type="hidden" name="next" value="/">
-      <button type="submit" class="watchlist-remove" title="Remove {{ row.symbol }} from the watchlist" aria-label="Remove {{ row.symbol }} from the watchlist">&times;</button>
-    </form>
+    {% endfor %}
   </div>
-  {% endfor %}
   {% else %}
-  <div class="empty-state">No stocks on the watchlist yet.</div>
+  <div class="empty-state">No stocks on the watchlist yet — add one from any stock page.</div>
   {% endif %}
 </div>
 
+{% if market.sector_leaders %}
+<div class="card">
+  <div class="label">Leading groups</div>
+  <div class="list">
+    {% for r in market.sector_leaders %}
+    <div class="row">
+      <div class="main"><div class="sym" style="font-weight: 500;">{{ r.sector }}</div><div class="sub">{{ r.passing }} of {{ r.members }} pass · median RS {{ r.median_rs }}</div></div>
+      <div class="right">{% for s in r.leaders %}<a href="/stock/{{ s }}" style="margin-left: 10px;">{{ s|sym }}</a>{% endfor %}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% endblock %}

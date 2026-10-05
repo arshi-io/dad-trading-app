@@ -20,17 +20,31 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 import pandas as pd
 import yfinance as yf
 
+from code.app import settings  # first: loads .env before anything reads the environment
 from code.data.fetchers.nifty500 import fetch_nifty500_directory
-from code.evaluator.memo import build_bundle, generate_memo, match_headlines, _init_db as init_memo_db
-from code.pipeline.news_rss import fetch_news_items
+from code.live import audit as live_audit, db as live_db, state as live_state
+from code.live.session import market_session
+from code.live import broker_session
+from code.live.brokers import choice as choice_broker
+from code.live.feed import LiveFeed
+from code.live.market_data import ChoiceProvider, MotilalProvider, SimulatedProvider, YFinanceDelayedProvider
+from code.data.fetchers.earnings import fetch_next_results
+from code.evaluator.memo import _init_db as init_memo_db
+from code.evaluator.stock_review import cached_review, get_review, latest_signal
+from code.pipeline.news_rss import fetch_company_news, fetch_news_items
 from code.pipeline.nightly_pipeline import kite_fetch
-from code.signals.mean_rev import generate_signals as generate_mean_rev_signals
-from code.trading.portal import place_trade, close_trade, get_trades, get_trade_stats
+from code.signals.minervini.setup import stock_metrics
+from code.trading.portal import (
+    close_trade, delete_all_closed, delete_trade, get_scorecard, get_trade_stats, get_trades, place_trade, set_note,
+)
+from code.trading.predict import predict_stock
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -66,11 +80,37 @@ def _ticker_directory() -> List[Dict[str, str]]:
     return _TICKER_DIRECTORY_CACHE
 
 
-def _inject_ticker_directory(request: Request) -> Dict[str, Any]:
-    return {"ticker_directory": _ticker_directory()}
+def _template_globals(request: Request) -> Dict[str, Any]:
+    nifty = (_load_latest_snapshot().get("indices") or {}).get("nifty") or {}
+    return {"csp_nonce": getattr(request.state, "csp_nonce", ""), "nav_nifty": nifty}
 
 
-TEMPLATES = Jinja2Templates(directory=str(ROOT / "templates"), context_processors=[_inject_ticker_directory])
+TEMPLATES = Jinja2Templates(directory=str(ROOT / "templates"), context_processors=[_template_globals])
+
+
+def _sym(value: Any) -> str:
+    return str(value or "").replace(".NS", "")
+
+
+def _nice_date(value: Any, with_time: bool = False) -> str:
+    """'2026-10-03T17:08:25+05:30' -> '3 Oct, 5:08 pm' (or '3 Oct 2026' for dates)."""
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return str(value)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(IST)
+    day = f"{dt.day} {dt.strftime('%b')}"
+    if with_time and (dt.hour or dt.minute):
+        return f"{day}, {dt.strftime('%I:%M %p').lstrip('0').lower()}"
+    return day if dt.year == datetime.now().year else f"{day} {dt.year}"
+
+
+TEMPLATES.env.filters["sym"] = _sym
+TEMPLATES.env.filters["nicedate"] = _nice_date
+TEMPLATES.env.filters["nicetime"] = lambda v: _nice_date(v, with_time=True)
 
 
 def _normalize_ticker(raw: str) -> str:
@@ -135,13 +175,20 @@ def _drop_incomplete_ohlcv_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(subset=["open", "high", "low", "close", "volume"])
 
 
+_SNAPSHOT_CACHE: Dict[str, Any] = {"key": None, "data": None}
+
+
 def _load_latest_snapshot() -> Dict[str, Any]:
-    """Dashboard reads pre-computed JSON snapshots only -- never recomputes live."""
+    """Dashboard reads pre-computed JSON snapshots only -- never recomputes live.
+    Parsed once per file version: the snapshot is ~2.5 MB and every page (plus the header quote) reads it."""
     files = sorted(SNAPSHOT_DIR.glob("*.json"))
     if not files:
         return {"screen": {"items": []}, "meta": {"generated_at": None, "status": "missing"}}
-    with open(files[-1], "r", encoding="utf-8") as handle:
-        return json.load(handle)
+    key = (str(files[-1]), files[-1].stat().st_mtime_ns)
+    if _SNAPSHOT_CACHE["key"] != key:
+        with open(files[-1], "r", encoding="utf-8") as handle:
+            _SNAPSHOT_CACHE.update(key=key, data=json.load(handle))
+    return _SNAPSHOT_CACHE["data"]
 
 
 def _load_previous_snapshot() -> Optional[Dict[str, Any]]:
@@ -288,8 +335,14 @@ def _build_watchlist_section(
             elif rank_today < rank_yesterday:
                 arrow, arrow_class = "↓", "bad"
 
+        facts = today_item or {}
         rows.append({
             "symbol": symbol,
+            "close": facts.get("close"),
+            "chg_pct": facts.get("chg_pct"),
+            "pct_from_high": facts.get("pct_from_high"),
+            "conditions": facts.get("conditions_passed"),
+            "setup_status": (facts.get("setup") or {}).get("status"),
             "in_screen": today_item is not None,
             "stance_today": stance_today,
             "stance_today_class": today_item.get("stance_class") if today_item else None,
@@ -319,13 +372,15 @@ def _freshness_labels(snapshot: Dict[str, Any]) -> Dict[str, Optional[str]]:
     real question -- "is the PRICE stale or is the VERDICT stale" -- instead
     of one ambiguous blob.
     """
-    generated_at = snapshot.get("meta", {}).get("generated_at")
+    meta = snapshot.get("meta", {})
+    generated_at = meta.get("generated_at")
+    base = {"market_data_label": None, "analysis_age_label": None, "generated_at": generated_at, "data_asof": meta.get("data_asof")}
     if not generated_at:
-        return {"market_data_label": None, "analysis_age_label": None}
+        return base
     try:
         generated = datetime.fromisoformat(generated_at)
     except ValueError:
-        return {"market_data_label": None, "analysis_age_label": None}
+        return base
 
     delta = datetime.now() - generated
     hours = delta.total_seconds() / 3600
@@ -335,6 +390,7 @@ def _freshness_labels(snapshot: Dict[str, Any]) -> Dict[str, Optional[str]]:
         age_label = f"{hours:.0f}h old"
 
     return {
+        **base,
         "market_data_label": "CURRENT" if delta <= STALE_AFTER else None,
         "analysis_age_label": age_label,
     }
@@ -377,7 +433,9 @@ async def _run_pairs_monthly_rescan_job() -> None:
     await asyncio.to_thread(_run_pairs_monthly_rescan_sync)
 
 
-scheduler = AsyncIOScheduler(timezone=IST)
+# A sleeping laptop wakes up after the 18:30 / 08:30 slots; by default APScheduler then skips the run
+# (1s grace). Run a missed job once on wake instead, if it is less than 12h late.
+scheduler = AsyncIOScheduler(timezone=IST, job_defaults={"coalesce": True, "misfire_grace_time": 12 * 3600})
 
 APP_PIN_HASH = os.getenv("APP_PIN")  # a bcrypt hash of the PIN -- never the raw digits
 SESSION_SECRET = os.getenv("SESSION_SECRET")
@@ -503,6 +561,8 @@ def _safe_next(next_path: str) -> str:
 async def lifespan(_app: FastAPI):
     _enforce_auth_before_serving()
     _init_watchlist_db()
+    live_db.migrate()
+    live_audit.record("app_start", "system", "app", "", settings.summary())
     init_memo_db()  # Creates both memos and paper_trades tables
 
     scheduler.add_job(
@@ -525,6 +585,16 @@ async def lifespan(_app: FastAPI):
         id="pairs_monthly_rescan",
         name="Pairs cointegration rescan (1st of month, 20:00 IST)",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        lambda: asyncio.create_task(asyncio.to_thread(broker_session.auto_connect)),
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=50, timezone=IST),
+        id="broker_auto_connect", name="Motilal auto-connect (08:50 IST, if configured)", replace_existing=True,
+    )
+    scheduler.add_job(
+        lambda: asyncio.create_task(asyncio.to_thread(choice_broker.auto_connect)),
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=55, timezone=IST),
+        id="choice_auto_connect", name="Choice auto-connect (08:55 IST, if configured)", replace_existing=True,
     )
     scheduler.start()
     for job in scheduler.get_jobs():
@@ -549,6 +619,9 @@ async def lifespan(_app: FastAPI):
             logger.exception("news cache warm failed (non-fatal)")
 
     asyncio.create_task(_warm_news_cache())
+    asyncio.create_task(asyncio.to_thread(broker_session.auto_connect))
+    asyncio.create_task(asyncio.to_thread(choice_broker.auto_connect))
+    asyncio.create_task(LIVE_FEED.run())
 
     from code.pipeline.nightly_pipeline import PAIRS_CACHE_PATH
     if not PAIRS_CACHE_PATH.exists():
@@ -560,7 +633,7 @@ async def lifespan(_app: FastAPI):
     scheduler.shutdown(wait=False)
 
 
-PUBLIC_AUTH_PATHS = {"/login", "/logout"}
+PUBLIC_AUTH_PATHS = {"/login", "/logout", "/healthz"}
 
 
 class SessionAuthMiddleware(BaseHTTPMiddleware):
@@ -607,20 +680,54 @@ class RequestTimingMiddleware(BaseHTTPMiddleware):
         return response
 
 
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Standard hardening headers on every response, auth-gated or not."""
+    """Hardening on every response (OWASP ASVS L1, secure headers project):
+    a nonce-based CSP so only this app's own scripts run, no framing, no sniffing, no
+    powerful browser features, and a same-origin check on every state-changing request
+    (defence in depth on top of the SameSite=Lax session cookie)."""
 
     async def dispatch(self, request: Request, call_next):
+        if request.method not in _SAFE_METHODS and not _same_origin(request):
+            return JSONResponse({"detail": "Cross-site request blocked"}, status_code=403)
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
         response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+            "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        if RAILWAY_ENVIRONMENT:
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        if request.url.path.startswith("/api/") or request.url.path == "/login":
+            response.headers.setdefault("Cache-Control", "no-store")
+        if RAILWAY_ENVIRONMENT:  # HTTPS only: browsers ignore both over plain http on the home Wi-Fi
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         return response
 
 
-app = FastAPI(title="Papa Terminal", lifespan=lifespan)
+def _same_origin(request: Request) -> bool:
+    """Origin (or Referer) must name this host. Browsers always send one of them on a
+    form/fetch POST; if neither is present, fall back to Fetch Metadata."""
+    from urllib.parse import urlsplit
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if source:
+        return urlsplit(source).netloc == request.headers.get("host", "")
+    return request.headers.get("sec-fetch-site", "same-origin") in ("same-origin", "none")
+
+
+app = FastAPI(title="Papa Terminal", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SessionAuthMiddleware)
@@ -680,35 +787,6 @@ async def logout() -> RedirectResponse:
     return response
 
 
-def _latest_signal_dict(asset: str, df: pd.DataFrame) -> Dict[str, Any]:
-    """Live mean-reversion signal for the Stock Room's search-any-ticker box.
-
-    Stock Room already fetches OHLCV live for the chart (a deliberate,
-    pre-existing exception to "dashboard renders snapshots only" -- the
-    search box must work for tickers outside the nightly universe). This
-    reuses that same fetch rather than hitting the network again.
-    """
-    if df.empty or len(df) < 60:
-        return {"asset": asset, "direction": "WAIT", "confidence": 0.0,
-                "strategy": "mean_reversion_zscore", "reason": "insufficient price history"}
-
-    signals = generate_mean_rev_signals(df, window=60, entry_z=2.0, exit_z=0.5)
-    if not signals:
-        return {"asset": asset, "direction": "HOLD", "confidence": 0.0,
-                "strategy": "mean_reversion_zscore", "reason": "no active mean-reversion signal today"}
-
-    latest = signals[-1]
-    return {
-        "asset": asset,
-        "direction": latest.direction,
-        "confidence": round(float(latest.confidence), 3),
-        "strategy": latest.strategy,
-        "timeframe": latest.timeframe,
-        "timestamp": latest.timestamp.isoformat() if hasattr(latest.timestamp, "isoformat") else str(latest.timestamp),
-        "metadata": latest.metadata,
-    }
-
-
 def _compute_atr_stop(df: pd.DataFrame, window: int = ATR_WINDOW, multiplier: float = ATR_STOP_MULTIPLIER) -> Dict[str, Optional[float]]:
     """14-day ATR and a suggested stop (1.5x ATR below the last close).
 
@@ -744,7 +822,7 @@ def _find_screen_item(snapshot: Dict[str, Any], ticker: str) -> Optional[Dict[st
     return None
 
 
-_REGIME_WORD = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", "CHOPPY": "choppy"}
+_REGIME_WORD = {"TRENDING_UP": "uptrend", "TRENDING_DOWN": "correction", "CHOPPY": "choppy"}
 
 # Engine-internal strategy ids (Signal.strategy) -> what Papa should read.
 # The ids are a locked contract in code/signals/*.py and stay as they are;
@@ -795,7 +873,7 @@ def _compute_stockroom_stance(
         if screen_item.get("rs_rank") is not None:
             evidence.append(f"RS {screen_item['rs_rank']}")
     if regime:
-        evidence.append(f"regime {_REGIME_WORD.get(regime, regime.lower())}")
+        evidence.append(f"market {_REGIME_WORD.get(regime, regime.lower())}")
     zscore = (signal or {}).get("metadata", {}).get("zscore")
     if zscore is not None and len(evidence) < 3:
         evidence.append(f"z-score {zscore:.2f}")
@@ -822,22 +900,20 @@ def _setup_quality(score: Optional[int]) -> Dict[str, Optional[str]]:
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request) -> HTMLResponse:
+    """One market read, one list of actionable setups, the watchlist -- in that order."""
     snapshot = _load_latest_snapshot()
     screen_items = snapshot.get("screen", {}).get("items", [])
     previous_snapshot = _load_previous_snapshot()
-    watchlist_rows = _build_watchlist_section(screen_items, previous_snapshot)
     diffs, _dropped = _diff_screen_items(screen_items, previous_snapshot)
-
-    # "Strongest setups to review": same screen data as the shortlist below,
-    # just re-ranked by stance (regime fit) first and RS second using the
-    # existing stance ordinal table (_STANCE_RANK, already used for the
-    # watchlist's yesterday->today arrow) -- no new scoring, just a sort key.
-    passed_items = [item for item in screen_items if item.get("passed")]
-    top_today = sorted(
-        passed_items,
-        key=lambda item: (_STANCE_RANK.get(item.get("stance"), 0), item.get("rs_rank") or 0),
-        reverse=True,
-    )[:5]
+    results = snapshot.get("results") or {}
+    reviews = {p["symbol"]: p.get("review") for p in snapshot.get("predictions", []) if p.get("review")}
+    setups = []
+    for item in snapshot.get("action_queue", []):
+        row = dict(item)
+        row["results_date"] = results.get(item["symbol"])
+        row["review"] = reviews.get(item["symbol"])
+        row["badge"] = (diffs.get(item["symbol"]) or {}).get("badge")
+        setups.append(row)
 
     return TEMPLATES.TemplateResponse(
         request,
@@ -845,13 +921,11 @@ async def home(request: Request) -> HTMLResponse:
         {
             "regime": snapshot.get("regime", "CHOPPY"),
             "indices": snapshot.get("indices", {}),
+            "market": snapshot.get("market") or {},
+            "posture": _posture(snapshot),
             "briefing": snapshot.get("briefing", {}).get("items", []),
-            "action_queue": snapshot.get("action_queue", []),
-            "screen_items": screen_items,
-            "top_today": top_today,
-            "diffs": diffs,
-            "watchlist_rows": watchlist_rows,
-            "generated_at": snapshot.get("meta", {}).get("generated_at"),
+            "setups": setups,
+            "watchlist_rows": _build_watchlist_section(screen_items, previous_snapshot),
             "stale": _snapshot_is_stale(snapshot),
             "active_tab": "today",
             **_freshness_labels(snapshot),
@@ -873,11 +947,11 @@ async def watchlist_remove(symbol: str = Form(...), next: str = Form("/")) -> Re
 
 @app.get("/stock/{asset}", response_class=HTMLResponse)
 async def stock_room(asset: str, request: Request) -> HTMLResponse:
+    """Everything that's cheap renders now; the Setup Review (an LLM call when not pre-computed
+    overnight) and the company headlines load into the page afterwards."""
     asset = _normalize_ticker(asset)
     snapshot = _load_latest_snapshot()
-    _t = time.perf_counter()
-    df = _drop_incomplete_ohlcv_rows(kite_fetch(asset))
-    _phase_fetch = (time.perf_counter() - _t) * 1000
+    df = _drop_incomplete_ohlcv_rows(await asyncio.to_thread(kite_fetch, asset))
 
     base_context = {
         "asset": asset,
@@ -887,119 +961,137 @@ async def stock_room(asset: str, request: Request) -> HTMLResponse:
         "in_watchlist": asset in _get_watchlist_symbols(),
         **_freshness_labels(snapshot),
     }
-
     if df.empty:
-        # Bad/unknown symbol -- a clean message, never a 500 or a blank page,
-        # and skip the memo call entirely so a mistyped ticker doesn't burn
-        # a real LLM request on nothing.
-        return TEMPLATES.TemplateResponse(
-            request,
-            "stock_room.html",
-            {
-                **base_context,
-                "not_found": True,
-                "latest": None,
-                "memo": None,
-                "signal": None,
-                "headlines": [],
-                "delivery_pct": None,
-                "atr": None,
-                "atr_stop": None,
-                "position_size": None,
-                "stance": None,
-                "stance_class": None,
-                "stance_evidence": [],
-                "quality_word": None,
-                "quality_class": None,
-                "screen_item": None,
-                "regime": None,
-            },
-        )
+        return TEMPLATES.TemplateResponse(request, "stock_room.html", {**base_context, "not_found": True})
 
-    latest = df.iloc[-1]
-    _t = time.perf_counter()
-    news_pool = fetch_news_items(limit=20)
-    matched_headlines = match_headlines(asset, news_pool, limit=5)
-    _phase_news = (time.perf_counter() - _t) * 1000
-    _t = time.perf_counter()
-    signal = _latest_signal_dict(asset, df)
-    risk = _compute_atr_stop(df)
-    _phase_signal = (time.perf_counter() - _t) * 1000
     regime = snapshot.get("regime")
     screen_item = _find_screen_item(snapshot, asset)
     if screen_item is None:
-        # Off-universe ticker (KRBL, RISHABH, anything outside the NIFTY 500
-        # screen): the 8-point template is a pure function of this stock's own
-        # OHLCV, which we already have, so evaluate it live rather than
-        # showing an empty checklist. RS rank is the one thing that genuinely
-        # can't be computed here -- it's a ranking *against the universe* --
-        # so it stays None and the template says so instead of inventing one.
+        # Off-universe ticker: the 8-point template is a pure function of this stock's own OHLCV,
+        # so evaluate it live. RS rank ranks against the universe, so it stays None.
         screen_item = _evaluate_screen_item_live(asset, df, regime)
-    trend_template = None
-    if screen_item is not None:
-        trend_template = {
-            "passed": screen_item.get("passed"),
-            "conditions_passed": screen_item.get("conditions_passed"),
-            "rs_rank": screen_item.get("rs_rank"),
-            "checklist": screen_item.get("checklist"),
-        }
-    bundle = build_bundle(
-        asset, signal=signal, headlines=matched_headlines, diary=[],
-        trend_template=trend_template, market_regime=regime, delivery_pct=None,
-    )
-    _t = time.perf_counter()
-    memo = generate_memo(bundle, asset, snapshot_date="today")
-    _phase_memo = (time.perf_counter() - _t) * 1000
-    logger.info(
-        "TIMING /stock/%s phases: fetch=%.0fms news=%.0fms signal=%.0fms memo=%.0fms",
-        asset, _phase_fetch, _phase_news, _phase_signal, _phase_memo,
-    )
-    stance = _compute_stockroom_stance(memo, screen_item, regime, signal)
-    quality = _setup_quality(memo.get("score") if not memo.get("sentinel") else None)
+    results = snapshot.get("results") or {}
+    results_date = results[asset] if asset in results else (await asyncio.to_thread(fetch_next_results, [asset])).get(asset)
+    posture = _posture(snapshot)
+    plan = predict_stock(asset, df, risk_pct=posture["risk_pct"], results_date=results_date)
+    signal = latest_signal(asset, df)
+    review = cached_review(asset, snapshot)
+
     return TEMPLATES.TemplateResponse(
         request,
         "stock_room.html",
         {
             **base_context,
             "not_found": False,
-            "latest": latest,
-            "memo": memo,
-            "signal": bundle["signal"],
-            "signal_label": _strategy_label((bundle["signal"] or {}).get("strategy")),
-            "headlines": bundle["headlines"],
-            "delivery_pct": None,  # needs NSE bhavcopy -- not wired in v1, shown as "--" not a fake 0.0
-            "atr": risk["atr"],
-            "atr_stop": risk["stop_price"],
-            "position_size": None,  # Papa Terminal doesn't track capital/portfolio size -- decision support only
-            "stance": stance["stance"],
-            "stance_class": stance["stance_class"],
-            "stance_evidence": stance["stance_evidence"],
-            "quality_word": quality["word"],
-            "quality_class": quality["class"],
+            "company": _company_name(asset),
+            "latest": df.iloc[-1],
+            "metrics": stock_metrics(df),
+            "plan": plan,
+            "posture": posture,
+            "grade": (snapshot.get("market") or {}).get("grade"),
+            "history": _grade_history((snapshot.get("market") or {}).get("grade")),
+            "signal": signal if signal.get("direction") in ("BUY", "SELL") else None,
             "screen_item": screen_item,
             "regime": regime,
+            **_review_context(review, screen_item, regime),
         },
     )
 
 
+_BASE_RATES_PATH = ROOT.parent / "data" / "base_rates.json"
+
+
+def _grade_history(grade: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Historical breakout record for this market grade (code/research/base_rates.py)."""
+    if not grade:
+        return None
+    try:
+        return json.loads(_BASE_RATES_PATH.read_text(encoding="utf-8"))["grades"].get(grade)
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _posture(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    posture = (snapshot.get("market") or {}).get("posture")
+    if posture:
+        return posture
+    regime = snapshot.get("regime") or "CHOPPY"
+    return {"TRENDING_UP": {"level": "PRESS", "risk_pct": 1.0, "max_positions": 8, "text": "Uptrend: normal size."},
+            "TRENDING_DOWN": {"level": "DEFENSIVE", "risk_pct": 0.25, "max_positions": 2, "text": "Market in correction: mostly cash."},
+            }.get(regime, {"level": "CAUTIOUS", "risk_pct": 0.5, "max_positions": 4, "text": "Mixed market: half size."})
+
+
+def _company_name(ticker: str) -> Optional[str]:
+    return next((d["name"] for d in _ticker_directory() if d["symbol"] == ticker), None)
+
+
+def _review_context(review: Optional[Dict[str, Any]], screen_item: Optional[Dict[str, Any]], regime: Optional[str]) -> Dict[str, Any]:
+    if review is None:
+        return {"memo": None}
+    stance = _compute_stockroom_stance(review, screen_item, regime, {})
+    quality = _setup_quality(review.get("score") if not review.get("sentinel") else None)
+    return {
+        "memo": review,
+        "stance": stance["stance"], "stance_class": stance["stance_class"], "stance_evidence": stance["stance_evidence"],
+        "quality_word": quality["word"], "quality_class": quality["class"],
+    }
+
+
+@app.get("/api/memo/{ticker}", response_class=HTMLResponse)
+async def api_memo_lazy(ticker: str, request: Request) -> HTMLResponse:
+    ticker = _normalize_ticker(ticker)
+    snapshot = _load_latest_snapshot()
+    df = _drop_incomplete_ohlcv_rows(await asyncio.to_thread(kite_fetch, ticker))
+    if df.empty:
+        return HTMLResponse('<div class="empty-state">No price data, so no review.</div>', status_code=404)
+    review = await asyncio.to_thread(
+        get_review, ticker, df, snapshot, [], _company_name(ticker) or ticker.replace(".NS", ""),
+    )
+    screen_item = _find_screen_item(snapshot, ticker) or _evaluate_screen_item_live(ticker, df, snapshot.get("regime"))
+    return TEMPLATES.TemplateResponse(request, "_review_card.html", _review_context(review, screen_item, snapshot.get("regime")))
+
+
+@app.get("/api/headlines/{ticker}", response_class=HTMLResponse)
+async def api_headlines(ticker: str, request: Request) -> HTMLResponse:
+    ticker = _normalize_ticker(ticker)
+    name = _company_name(ticker) or ticker.replace(".NS", "")
+    items = await asyncio.to_thread(fetch_company_news, name, 5, ticker)
+    return TEMPLATES.TemplateResponse(request, "_headlines.html", {"headlines": items})
+
+
 @app.get("/screen", response_class=HTMLResponse)
 async def minervini_screen(request: Request) -> HTMLResponse:
+    """Defaults to the stocks that pass -- 359 'avoid' rows were most of a 97,000-pixel page."""
     snapshot = _load_latest_snapshot()
-    items = snapshot.get("screen", {}).get("items", [])
-    generated_at = snapshot.get("meta", {}).get("generated_at")
-    diffs, dropped = _diff_screen_items(items, _load_previous_snapshot())
+    all_items = snapshot.get("screen", {}).get("items", [])
+    view = request.query_params.get("view", "pass")
+    diffs, dropped = _diff_screen_items(all_items, _load_previous_snapshot())
+    passing = [i for i in all_items if i.get("passed")]
+    close = [i for i in all_items if not i.get("passed") and i.get("conditions_passed") == 7]
+    items = {"pass": passing, "close": close}.get(view, all_items)
+    setups = [i.get("setup") or {} for i in passing]
+    vcp = sorted((i for i in passing if (i.get("setup") or {}).get("vcp")),
+                 key=lambda i: (i["setup"]["status"] != "IN BUY RANGE", i["setup"].get("pct_to_pivot") or 99))
     return TEMPLATES.TemplateResponse(
         request,
         "screen.html",
         {
             "items": items,
+            "view": view if view in ("pass", "close", "all") else "all",
+            "vcp": vcp,
+            "counts": {
+                "all": len(all_items), "passing": len(passing), "close": len(close),
+                "buy_range": sum(1 for s in setups if s.get("status") == "IN BUY RANGE"),
+                "near_pivot": sum(1 for s in setups if s.get("status") == "BASING" and (s.get("pct_to_pivot") or 99) <= 5),
+            },
+            "changes": snapshot.get("screen_changes") or {},
+            "results": snapshot.get("results") or {},
+            "names": {d["symbol"]: d["name"] for d in _ticker_directory()},
             "diffs": diffs,
             "dropped": dropped,
-            "generated_at": generated_at,
             "stale": _snapshot_is_stale(snapshot),
             "active_tab": "screen",
             "regime": snapshot.get("regime", "CHOPPY"),
-            "watchlist_symbols": set(_get_watchlist_symbols()),
             **_freshness_labels(snapshot),
         },
     )
@@ -1023,11 +1115,17 @@ async def spread_trades(request: Request) -> HTMLResponse:
         except (json.JSONDecodeError, OSError):
             pass
 
+    # Live trades first, then the most stretched; chart series go to the page as one JSON blob
+    # drawn when scrolled into view, not as inline scripts per card.
+    items = sorted(pairs.get("items", []), key=lambda i: (i.get("status") not in ("BUY", "SELL"), -abs(i.get("zscore") or 0)))
+    items_chart = [{"spread": i.get("spread_series", [])[-120:], "upper": i.get("upper_band_series", [])[-120:],
+                    "lower": i.get("lower_band_series", [])[-120:]} for i in items]
     return TEMPLATES.TemplateResponse(
         request,
         "pairs.html",
         {
-            "items": pairs.get("items", []),
+            "items": items,
+            "items_chart": items_chart,
             "last_scan": pairs.get("last_scan"),
             "rescan_stats": rescan_stats,
             "generated_at": snapshot.get("meta", {}).get("generated_at"),
@@ -1038,19 +1136,140 @@ async def spread_trades(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/diary", response_class=HTMLResponse)
-async def diary(request: Request) -> HTMLResponse:
+@app.get("/diary")
+async def diary() -> RedirectResponse:
+    """The diary lives with the trades now: every paper trade carries its own note."""
+    return RedirectResponse(url="/predictions#book", status_code=307)
+
+
+def _live_symbols() -> List[str]:
+    """What's worth a live price: watchlist, tonight's buy-ready setups, open positions, waiting orders."""
     snapshot = _load_latest_snapshot()
-    return TEMPLATES.TemplateResponse(
-        request,
-        "diary.html",
-        {
-            "generated_at": snapshot.get("meta", {}).get("generated_at"),
-            "stale": _snapshot_is_stale(snapshot),
-            "active_tab": "diary",
-            **_freshness_labels(snapshot),
-        },
-    )
+    syms = list(_get_watchlist_symbols())
+    syms += [a["symbol"] for a in snapshot.get("action_queue", []) if a.get("kind") == "stock"]
+    syms += [p["symbol"] for p in snapshot.get("predictions", []) if p.get("kind") == "stock" and p.get("tradeable")]
+    syms += [t["ticker"] for t in get_trades(limit=100, status="open") + get_trades(limit=100, status="pending") if t.get("kind") != "pair"]
+    return list(dict.fromkeys(syms))
+
+
+_SIMULATED: Optional[SimulatedProvider] = None
+
+
+def _live_provider():
+    global _SIMULATED
+    choice = settings.MARKET_DATA_PROVIDER
+    if choice == "broker" and choice_broker.client() is not None:
+        return ChoiceProvider(choice_broker.client())
+    if choice == "broker" and broker_session.client() is not None:
+        return MotilalProvider(broker_session.client())
+    if choice == "yfinance_delayed":
+        return YFinanceDelayedProvider()
+    if _SIMULATED is None:
+        snapshot = _load_latest_snapshot()
+        closes = {i["symbol"]: i["close"] for i in snapshot.get("screen", {}).get("items", []) if i.get("close")}
+        closes.update({p["symbol"]: p["last"] for p in snapshot.get("predictions", []) if p.get("last")})
+        _SIMULATED = SimulatedProvider(closes)
+    return _SIMULATED
+
+
+LIVE_FEED = LiveFeed(_live_provider, _live_symbols)
+
+
+@app.get("/api/quotes")
+async def api_quotes() -> JSONResponse:
+    """Latest validated quote per watched symbol. `stale` is judged against QUOTE_STALE_SECONDS;
+    `simulated` marks demo prices."""
+    return JSONResponse({
+        "provider": LIVE_FEED.provider_name or settings.MARKET_DATA_PROVIDER,
+        "session": market_session().state().as_dict(),
+        "last_poll": LIVE_FEED.last_poll.isoformat() if LIVE_FEED.last_poll else None,
+        "error": LIVE_FEED.last_error,
+        "quotes": LIVE_FEED.view(),
+        "rejected": LIVE_FEED.rejected,
+    })
+
+
+@app.get("/broker", response_class=HTMLResponse)
+async def broker_page(request: Request) -> HTMLResponse:
+    snapshot = _load_latest_snapshot()
+    secure = request.url.scheme == "https" or request.client is None or request.client.host in ("127.0.0.1", "::1")
+    return TEMPLATES.TemplateResponse(request, "broker.html", {
+        "choice": await asyncio.to_thread(choice_broker.status),
+        "status": broker_session.status(),
+        "provider": settings.MARKET_DATA_PROVIDER,
+        "session": market_session().state().as_dict(),
+        "feed": {"last_poll": LIVE_FEED.last_poll, "error": LIVE_FEED.last_error, "count": len(LIVE_FEED.quotes)},
+        "secure": secure,
+        "message": request.query_params.get("m", ""),
+        "active_tab": "broker",
+        "stale": _snapshot_is_stale(snapshot),
+        **_freshness_labels(snapshot),
+    })
+
+
+@app.post("/broker/connect")
+async def broker_connect(password: str = Form(...), totp: str = Form("")) -> RedirectResponse:
+    from urllib.parse import quote as urlquote
+    result = await asyncio.to_thread(broker_session.connect, password, totp.strip(), "papa")
+    return RedirectResponse(url="/broker?m=" + urlquote(result["message"]), status_code=303)
+
+
+@app.post("/broker/choice/connect")
+async def broker_choice_connect() -> RedirectResponse:
+    from urllib.parse import quote as urlquote
+    result = await asyncio.to_thread(choice_broker.connect, "papa")
+    return RedirectResponse(url="/broker?m=" + urlquote(result["message"]), status_code=303)
+
+
+@app.post("/broker/choice/disconnect")
+async def broker_choice_disconnect() -> RedirectResponse:
+    await asyncio.to_thread(choice_broker.disconnect, "papa")
+    return RedirectResponse(url="/broker?m=Disconnected", status_code=303)
+
+
+@app.post("/broker/disconnect")
+async def broker_disconnect() -> RedirectResponse:
+    await asyncio.to_thread(broker_session.disconnect, "papa")
+    return RedirectResponse(url="/broker?m=Disconnected", status_code=303)
+
+
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    """Liveness + readiness for monitors: no secrets, no market data, cheap."""
+    checks: Dict[str, Any] = {}
+    try:
+        conn = live_db.connect()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {type(exc).__name__}"
+    snapshot = _load_latest_snapshot()
+    checks["snapshot_stale"] = _snapshot_is_stale(snapshot)
+    checks["data_asof"] = snapshot.get("meta", {}).get("data_asof")
+    checks["session"] = market_session().state().phase
+    checks.update(live_state.snapshot())
+    checks["config"] = settings.summary()
+    ok = checks["database"] == "ok"
+    return JSONResponse({"status": "ok" if ok else "degraded", "checks": checks}, status_code=200 if ok else 503)
+
+
+@app.get("/api/state")
+async def api_state() -> JSONResponse:
+    return JSONResponse({**live_state.snapshot(), "session": market_session().state().as_dict()})
+
+
+@app.post("/api/halt")
+async def api_halt(on: int = Form(...), reason: str = Form("")) -> JSONResponse:
+    """Emergency halt: blocks every new order until switched off. Authenticated + audited."""
+    live_state.set_halt(bool(on), actor="papa", reason=reason[:200])
+    return JSONResponse(live_state.snapshot())
+
+
+@app.get("/api/tickers.json")
+async def api_tickers() -> JSONResponse:
+    """Search directory for the typeahead -- one cached download instead of 30 KB inside every page."""
+    return JSONResponse(_ticker_directory(), headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/api/screen-row/{symbol}", response_class=HTMLResponse)
@@ -1113,106 +1332,107 @@ async def api_candles(asset: str) -> JSONResponse:
     })
 
 
-@app.get("/api/memo/{ticker}", response_class=HTMLResponse)
-async def api_memo_lazy(ticker: str) -> HTMLResponse:
-    """Lazy-load memo HTML for a stock. Used by stock_room.html to defer LLM call."""
-    ticker = _normalize_ticker(ticker)
-    df = kite_fetch(ticker)
-    if df.empty:
-        return HTMLResponse("<p>Could not load memo — no data for this stock.</p>", status_code=404)
-
-    news_pool = fetch_news_items(limit=20)
-    matched_headlines = match_headlines(ticker, news_pool, limit=5)
-    signal = _latest_signal_dict(ticker, df)
-
-    snapshot = _load_latest_snapshot()
-    screen_item = _find_screen_item(snapshot, ticker)
-    regime = snapshot.get("regime", "CHOPPY")
-
-    trend_template = None
-    if screen_item:
-        trend_template = {
-            "passed": screen_item.get("passed"),
-            "conditions_passed": screen_item.get("conditions_passed"),
-            "rs_rank": screen_item.get("rs_rank"),
-            "checklist": screen_item.get("checklist"),
-        }
-
-    bundle = build_bundle(
-        ticker, signal=signal, headlines=matched_headlines, diary=[],
-        trend_template=trend_template, market_regime=regime, delivery_pct=None,
-    )
-    memo = generate_memo(bundle, ticker, snapshot_date="today")
-    stance = _compute_stockroom_stance(memo, screen_item, regime, signal)
-    quality = _setup_quality(memo.get("score") if not memo.get("sentinel") else None)
-
-    html = f"""
-    <div class="card">
-      <h3 class="supporting">Setup Review</h3>
-      <div class="verdict-top">
-        <div class="verdict-score verdict-{stance['stance_class']}">
-          <span class="score-number">{memo.get('score', 0)}</span>
-          <span class="score-label">{quality}</span>
-        </div>
-        <div>
-          <div class="verdict-rule">{stance['stance']}</div>
-          <div style="font-size: 14px; color: var(--muted); margin-top: 4px;">{', '.join(stance.get('stance_evidence', []))}</div>
-        </div>
-      </div>
-      <div class="memo-body">{memo.get('reasoning', 'No analysis available.')}</div>
-      {f'<div style="color: var(--red); font-size: 14px; margin-top: 12px;"><strong>Flags:</strong> {", ".join(memo.get("risk_flags", []))}</div>' if memo.get('risk_flags') else ''}
-    </div>
-    """
-    return HTMLResponse(html)
-
-
 @app.get("/predictions", response_class=HTMLResponse)
 async def predictions(request: Request) -> HTMLResponse:
-    """Trading portal with next-day predictions and paper trading."""
+    """Paper trading on the nightly projections. A searched off-list stock is projected live,
+    the same way Stock Room evaluates off-universe tickers live."""
     snapshot = _load_latest_snapshot()
-    regime = snapshot.get("regime", "CHOPPY")
-
-    # Get signal setups from the action queue (which has trade ideas)
-    action_queue = snapshot.get("action_queue", [])
-
-    # Get trade stats
-    stats = get_trade_stats()
-    open_trades = get_trades(limit=10, status="open")
-    closed_trades = get_trades(limit=20, status="closed")
+    posture = _posture(snapshot)
+    open_trades = get_trades(limit=50, status="open")
+    pending = get_trades(limit=50, status="pending")
+    held = {t["ticker"] for t in open_trades + pending}
+    preds = snapshot.get("predictions", [])
+    search = request.query_params.get("symbol", "").strip()
+    search_error = None
+    if search:
+        ticker = _normalize_ticker(search)
+        existing = next((p for p in preds if p["symbol"] == ticker), None)
+        live = existing or await asyncio.to_thread(_live_prediction, ticker, snapshot)
+        if live:
+            preds = [dict(live, searched=True)] + [p for p in preds if p["symbol"] != ticker]
+        else:
+            search_error = f"Couldn't find price history for {ticker.replace('.NS', '')} — check the spelling (NSE symbol, e.g. TATAMOTORS)."
+    for p in preds:
+        p["held"] = p["symbol"] in held
 
     return TEMPLATES.TemplateResponse(
         request,
         "predictions.html",
         {
             "active_tab": "predictions",
-            "regime": regime,
-            "action_queue": action_queue,
-            "stats": stats,
+            "regime": snapshot.get("regime", "CHOPPY"),
+            "posture": posture,
+            "market": snapshot.get("market") or {},
+            "grade": (snapshot.get("market") or {}).get("grade"),
+            "history": _grade_history((snapshot.get("market") or {}).get("grade")),
+            "slots_used": len(open_trades) + len(pending),
+            "predictions": preds,
+            "search": search,
+            "search_error": search_error,
+            "stats": get_trade_stats(),
+            "scorecard": get_scorecard(),
             "open_trades": open_trades,
-            "closed_trades": closed_trades,
+            "pending_trades": pending,
+            "closed_trades": get_trades(limit=30, status="closed") + get_trades(limit=10, status="expired"),
+            "generated_at": snapshot.get("meta", {}).get("generated_at"),
+            "stale": _snapshot_is_stale(snapshot),
             **_freshness_labels(snapshot),
         },
     )
 
 
 @app.post("/api/place-trade")
-async def api_place_trade(
-    ticker: str = Form(...),
-    side: str = Form(...),
-    entry_price: float = Form(...),
-    signal_type: str = Form(...),
-    notes: str = Form(""),
-) -> JSONResponse:
-    """Place a paper trade."""
-    result = place_trade(ticker, side, entry_price, signal_type, notes=notes)
-    return JSONResponse(result)
+async def api_place_trade(symbol: str = Form(...), qty: int = Form(0), exit_rule: str = Form("target")) -> JSONResponse:
+    """Paper-trade a projected setup: entry, stop and target come from tonight's snapshot, not the client.
+    Extended stocks and non-futures pairs are refused -- the page says why instead of offering a button."""
+    snapshot = _load_latest_snapshot()
+    pred = next((p for p in snapshot.get("predictions", []) if p["symbol"] == symbol), None)
+    if pred is None and "/" not in symbol:
+        pred = await asyncio.to_thread(_live_prediction, symbol, snapshot)
+    if pred is None:
+        return JSONResponse({"status": "error", "msg": "That setup is no longer in today's list."}, status_code=404)
+    if not pred.get("tradeable", True):
+        return JSONResponse({"status": "error", "msg": "Not a valid entry right now — wait for a proper base and pivot."}, status_code=400)
+    qty = qty if qty > 0 else pred["qty"]
+    result = place_trade(
+        pred["symbol"], pred["side"], pred["entry"], "pairs" if pred["kind"] == "pair" else "minervini",
+        qty=qty, target=pred["target"], stop=pred["stop"], kind=pred["kind"],
+        ticker_a=pred.get("ticker_a"), ticker_b=pred.get("ticker_b"), hedge_ratio=pred.get("hedge_ratio"),
+        price_date=pred["asof"], pending=pred.get("order") == "STOP",
+        max_positions=_posture(snapshot)["max_positions"],
+        exit_rule=exit_rule if pred["kind"] == "stock" else "target",
+    )
+    return JSONResponse(result, status_code=200 if result["status"] == "success" else 400)
 
 
 @app.post("/api/close-trade")
-async def api_close_trade(
-    trade_id: int = Form(...),
-    exit_price: float = Form(...),
-) -> JSONResponse:
-    """Close a paper trade."""
-    result = close_trade(trade_id, exit_price)
-    return JSONResponse(result)
+async def api_close_trade(trade_id: int = Form(...)) -> JSONResponse:
+    """Close at the last known market price."""
+    return JSONResponse(close_trade(trade_id))
+
+
+@app.post("/api/delete-trade")
+async def api_delete_trade(trade_id: int = Form(...)) -> JSONResponse:
+    return JSONResponse(delete_trade(trade_id))
+
+
+@app.post("/api/delete-closed-trades")
+async def api_delete_closed_trades() -> JSONResponse:
+    return JSONResponse(delete_all_closed())
+
+
+@app.post("/api/trade-note")
+async def api_trade_note(trade_id: int = Form(...), note: str = Form("")) -> JSONResponse:
+    return JSONResponse(set_note(trade_id, note))
+
+
+def _live_prediction(ticker: str, snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    df = _drop_incomplete_ohlcv_rows(kite_fetch(ticker))
+    if df.empty:
+        return None
+    results = snapshot.get("results") or {}
+    results_date = results[ticker] if ticker in results else fetch_next_results([ticker]).get(ticker)
+    pred = predict_stock(ticker, df, "Your search", risk_pct=_posture(snapshot)["risk_pct"], results_date=results_date)
+    if pred:
+        pred.update(link=f"/stock/{ticker}", source="search", rs_rank=None, on_watchlist=False)
+    return pred

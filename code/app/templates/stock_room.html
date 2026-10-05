@@ -1,154 +1,113 @@
 {% extends "base.html" %}
 {% block title %}{{ asset }} — Stock Room{% endblock %}
 {% block extra_head %}
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-  .ticker-row { display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap; margin-bottom: 14px; }
-  .ticker-symbol { font-family: var(--font-mono); font-size: 26px; font-weight: 800; }
-  .ticker-stats { display: flex; gap: 22px; flex-wrap: wrap; color: var(--muted); font-size: 15px; }
-  .ticker-stats .mono { color: var(--text); }
-  .chart-card { padding-top: 18px; }
-  .chart-legend {
-    display: flex; flex-wrap: wrap; gap: 8px 18px;
-    margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
-  }
-  .legend-item { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: var(--muted); }
-  .legend-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-  .legend-swatch.legend-line { width: 16px; height: 3px; border-radius: 2px; }
-  .legend-swatch.legend-bar {
-    width: 10px; height: 12px; border-radius: 2px;
-    background: linear-gradient(to bottom, #22C55E 50%, #EF4444 50%);
-  }
-  #chart { height: 460px; }
-
-  .grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-
-  .verdict-card { border-width: 2px; padding-bottom: 24px; }
-  .verdict-card.avoid { border-color: var(--red); background: linear-gradient(160deg, var(--red-dim), var(--surface) 55%); }
-  .verdict-card.trade { border-color: var(--green); background: linear-gradient(160deg, var(--green-dim), var(--surface) 55%); }
-  .verdict-card.wait  { border-color: var(--amber); background: linear-gradient(160deg, var(--amber-dim), var(--surface) 55%); }
-  .verdict-card.no-edge { border-color: var(--border-strong); background: var(--surface); }
-  .verdict-card.sentinel { border-color: var(--border-strong); }
-  .invalidation-box { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-  .invalidation-box h4 { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 10px 0; font-weight: 700; }
-  .invalidation-list { list-style: none; padding: 0; margin: 0; }
-  .invalidation-list li {
-    padding: 8px 0 8px 22px; position: relative;
-    border-bottom: 1px solid var(--border); font-size: 16px;
-  }
-  .invalidation-list li:last-child { border-bottom: none; }
-  .invalidation-list li::before { content: "→"; position: absolute; left: 0; color: var(--muted-2); }
-  .verdict-top { display: flex; align-items: center; gap: 20px; margin-bottom: 8px; flex-wrap: wrap; }
-  #score-gauge { width: 130px; height: 100px; flex-shrink: 0; }
-  .setup-quality { font-size: 18px; font-weight: 800; letter-spacing: 0.02em; }
-  .setup-quality.good { color: var(--green); }
-  .setup-quality.wait { color: var(--amber); }
-  .setup-quality.bad { color: var(--red); }
-  .setup-quality-caption { color: var(--muted); font-size: 13px; margin-top: 2px; }
-  .verdict-rule { color: var(--muted); font-size: 14px; margin: -4px 0 14px 0; }
-  .why-text { color: var(--muted); font-size: 15px; }
-  .why-text strong { color: var(--text); font-weight: 600; }
-  .risk-flags { list-style: none; padding: 0; margin: 12px 0 0 0; }
-  .risk-flags li {
-    display: inline-block; margin: 0 8px 8px 0;
-    padding: 5px 12px; border-radius: 999px;
-    background: var(--amber-dim); color: var(--amber);
-    font-size: 14px; font-weight: 600; border: 1px solid var(--amber);
-  }
-  .sentinel-box { display: flex; align-items: center; gap: 14px; padding: 6px 0; }
-  .sentinel-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted-2); flex-shrink: 0; }
-  .sentinel-text { color: var(--muted); font-style: italic; }
-
-  h3.supporting { color: var(--muted); font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; margin-bottom: 12px; }
-  .risk-line { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 16px; }
-  .risk-line:last-child { border-bottom: none; }
-  .risk-line .k { color: var(--muted); }
-  .risk-line .v { font-family: var(--font-mono); }
-  .risk-line .v.dim { color: var(--muted); font-family: var(--font-sans); font-style: italic; font-size: 15px; }
-  /* Deliberate "nothing to show here" states -- upright and quiet, not the
-     grey italic that reads like a failed lookup. */
-  .risk-line .v.note { color: var(--muted); font-family: var(--font-sans); font-style: normal; font-size: 15px; text-align: right; }
-  .signal-label { color: var(--muted); font-size: 15px; }
-  .live-eval-note {
-    color: var(--muted); font-size: 15px; line-height: 1.5;
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
-  }
-
-  .headline-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
-  .headline-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .headline-row:first-child { padding-top: 0; }
-  .headline-title { margin-bottom: 4px; }
-  .headline-meta { color: var(--muted); font-size: 14px; }
-  .headline-meta .src { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 5px; padding: 1px 8px; margin-right: 8px; font-size: 13px; }
-  .not-found-card { text-align: center; padding: 48px 24px; }
-
-  @media (max-width: 600px) {
-    .ticker-stats, .why-text, .risk-line .v.dim, .risk-line .v.note,
-    .headline-meta, .meta-item, .check-detail, .setup-quality-caption,
-    .verdict-rule, .legend-item, .signal-label, .live-eval-note {
-      font-size: 16px;
-    }
-    /* Label above value instead of squeezed side-by-side -- "You size this
-       yourself" next to "Position size" wraps to a cramped two-word column
-       on a 390px screen. */
-    .risk-line { flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 0; }
-    .risk-line .v, .risk-line .v.note, .risk-line .v.dim { text-align: left; }
-    .chart-legend { gap: 8px 14px; }
-    #chart { height: 320px; }
-    .verdict-top { gap: 14px; }
-    .watchlist-form { margin-left: 0; width: 100%; }
-    .watchlist-form .btn { width: 100%; justify-content: center; }
-  }
-
-  .stock-meta-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
-  .meta-item { color: var(--muted); font-size: 15px; }
-  .meta-item strong { color: var(--text); }
-  .rs-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 42px; padding: 4px 9px;
-    border-radius: 7px; font-family: var(--font-mono); font-weight: 700; font-size: 15px;
-    border: 1px solid var(--border-strong); color: var(--muted);
-  }
-  .rs-badge.strong { background: var(--green-dim); border-color: var(--green); color: var(--green); }
-  .rs-badge.pass   { background: transparent; border-color: var(--green); color: var(--green); }
+  .ticker-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+  .ticker-symbol { font-size: 20px; font-weight: 600; }
+  .meta-item { color: var(--muted); font-size: 13px; }
+  .rs-badge { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .rs-badge.strong, .rs-badge.pass { color: var(--green); }
   .watchlist-form { margin-left: auto; }
+  .watchlist-form .btn { min-height: 32px; padding: 5px 12px; font-size: 13px; }
+  .company { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .px-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .px-row .px { font-size: 24px; font-weight: 500; }
+  .px-row .chg { font-size: 15px; }
+  .px-row .ohlc { color: var(--muted); font-size: 12px; }
 
-  .scorecard { display: flex; gap: 4px; margin-bottom: 18px; }
-  .scorecard-seg { flex: 1; height: 8px; border-radius: 4px; background: var(--border-strong); }
+  .facts { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+  .fact { padding: 10px 12px 10px 0; }
+  .fact + .fact { padding-left: 12px; border-left: 1px solid var(--border); }
+  .fact .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .fact .v { font-size: 15px; font-weight: 500; }
+  .alert { font-size: 13px; color: var(--amber); margin-bottom: 8px; }
+  .alert.bad { color: var(--red); }
+
+  .setup-card .status { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .setup-card .status.go { color: var(--green); } .setup-card .status.wait { color: var(--amber); } .setup-card .status.no { color: var(--muted); }
+  .why-text { color: var(--muted); font-size: 14px; }
+  .why-text strong, .why-text b { color: var(--text); font-weight: 500; }
+  .plan { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 12px 0; }
+  .plan > div { padding: 8px 10px 8px 0; }
+  .plan > div + div { padding-left: 10px; border-left: 1px solid var(--border); }
+  .plan .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .plan .v { font-size: 15px; font-weight: 500; }
+
+  .chart-card { padding: 12px 14px; }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .legend-swatch { display: inline-block; width: 12px; height: 2px; }
+  .legend-swatch.legend-bar { width: 8px; height: 10px; background: linear-gradient(to bottom, #4caf50 50%, #e5534b 50%); }
+  #chart { height: 400px; }
+
+  .scorecard { display: flex; gap: 3px; margin-bottom: 12px; }
+  .scorecard-seg { flex: 1; height: 3px; border-radius: 2px; background: var(--border-strong); }
   .scorecard-seg.on { background: var(--green); }
-  .check-row { display: flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
-  .check-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .check-row:first-child { padding-top: 0; }
-  .check-badge {
-    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 14px; margin-top: 1px;
+  .check-row { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .check-row:last-child { border-bottom: none; }
+  .check-badge { flex-shrink: 0; width: 16px; font-size: 13px; font-weight: 600; }
+  .check-row.pass .check-badge { color: var(--green); } .check-row.fail .check-badge { color: var(--red); }
+  .check-label { font-size: 14px; }
+  .check-detail { color: var(--muted); font-size: 12px; }
+  .live-eval-note { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+
+  .grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; align-items: start; }
+  .verdict-top { display: flex; align-items: center; gap: 18px; margin-bottom: 10px; flex-wrap: wrap; }
+  .score-meter { width: 120px; flex-shrink: 0; }
+  .score-num { font-size: 28px; font-weight: 500; line-height: 1; }
+  .score-bar { position: relative; height: 3px; border-radius: 2px; background: var(--surface-2); margin: 8px 0 4px; }
+  .score-bar span { display: block; height: 100%; border-radius: 2px; background: var(--muted); }
+  .score-bar span.good { background: var(--green); } .score-bar span.wait { background: var(--amber); } .score-bar span.bad { background: var(--red); }
+  .score-bar i { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--muted); }
+  .score-cap { font-size: 11px; color: var(--muted-2); }
+  .setup-quality { font-size: 13px; font-weight: 600; letter-spacing: .03em; }
+  .setup-quality.good { color: var(--green); } .setup-quality.wait { color: var(--amber); } .setup-quality.bad { color: var(--red); }
+  .verdict-rule { color: var(--muted-2); font-size: 12px; }
+  .verdict-card p { font-size: 14px; color: #d0d0d0; }
+  .risk-flags { list-style: none; padding: 0; margin: 10px 0 0; }
+  .risk-flags li { font-size: 13px; color: var(--muted); padding: 3px 0 3px 14px; position: relative; }
+  .risk-flags li::before { content: ""; position: absolute; left: 0; top: 11px; width: 5px; height: 5px; border-radius: 50%; background: var(--amber); }
+  .invalidation-box { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .invalidation-box h4 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 6px; font-weight: 600; }
+  .invalidation-list { list-style: none; padding: 0; margin: 0; }
+  .invalidation-list li { padding: 4px 0; font-size: 13px; color: #cfcfcf; }
+  .sentinel-box { display: flex; align-items: center; gap: 10px; }
+  .sentinel-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2); flex-shrink: 0; }
+  .sentinel-text { color: var(--muted); font-size: 14px; }
+  .pulse { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .headline-row { padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .headline-row:last-child { border-bottom: none; }
+  .headline-title { font-size: 14px; }
+  .headline-title a { color: var(--text); }
+  .headline-meta { color: var(--muted-2); font-size: 12px; margin-top: 2px; }
+  .headline-meta .src { margin-right: 6px; color: var(--muted); }
+  .not-found-card { text-align: center; padding: 36px 20px; }
+
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  @media (max-width: 600px) {
+    .facts, .plan { grid-template-columns: 1fr 1fr; }
+    .fact:nth-child(3), .plan > div:nth-child(3) { border-left: none; padding-left: 0; }
+    .fact:nth-child(n+3), .plan > div:nth-child(n+3) { border-top: 1px solid var(--border); }
+    #chart { height: 300px; }
+    .watchlist-form .btn { min-height: 36px; }
   }
-  .check-row.pass .check-badge { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
-  .check-row.fail .check-badge { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
-  .check-label { font-weight: 600; }
-  .check-detail { color: var(--muted); font-size: 15px; font-family: var(--font-mono); margin-top: 3px; }
 </style>
 {% endblock %}
 {% block content %}
 
-<div class="card">
-  <h3 class="supporting" style="margin-bottom:14px;">Look up a stock</h3>
-  <form class="stock-search" onsubmit="event.preventDefault(); papaGoToTicker(document.getElementById('stock-ticker-input').value);">
+<div class="card" style="padding: 12px 14px;">
+  <form class="stock-search" data-ticker-form="stock-ticker-input">
     <div class="typeahead-wrap">
       <input id="stock-ticker-input" type="text" autocomplete="off"
              placeholder="Type a company name or symbol, e.g. Reliance" aria-label="Search any NSE stock" />
       <div id="stock-ticker-dropdown" class="typeahead-dropdown" role="listbox" hidden></div>
     </div>
-    <button type="submit" class="btn">Open</button>
+    <button type="submit" class="btn btn-ghost">Open</button>
   </form>
 </div>
-<script>
-  // papaAttachTypeahead is defined in base.html's own trailing script, which
-  // (in document order) runs after this block -- defer to DOMContentLoaded
-  // so it's guaranteed to exist by the time this call runs.
+<script nonce="{{ csp_nonce }}">
   document.addEventListener('DOMContentLoaded', function () {
     papaAttachTypeahead('stock-ticker-input', 'stock-ticker-dropdown');
   });
@@ -156,49 +115,77 @@
 
 {% if not_found %}
 <div class="card not-found-card">
-  <h2 style="margin-bottom:10px;">No data for {{ asset }}</h2>
+  <h2 style="margin-bottom:10px;">No data for {{ asset|sym }}</h2>
   <div class="empty-state" style="border:none; padding:0;">Check the symbol and try again — pick a suggestion from the search box above for a guaranteed match.</div>
 </div>
 {% else %}
 
 <div class="ticker-row">
-  <span class="ticker-symbol">{{ asset }}</span>
-  {% if latest is not none %}
-  <span class="ticker-stats">
-    <span>O <span class="mono">{{ "%.2f"|format(latest.open) }}</span></span>
-    <span>H <span class="mono">{{ "%.2f"|format(latest.high) }}</span></span>
-    <span>L <span class="mono">{{ "%.2f"|format(latest.low) }}</span></span>
-    <span>C <span class="mono">{{ "%.2f"|format(latest.close) }}</span></span>
-    <span>Vol <span class="mono">{{ "{:,.0f}".format(latest.volume) }}</span></span>
-  </span>
-  {% endif %}
-</div>
-
-{% set regime_words = {"TRENDING_UP": "trending up", "TRENDING_DOWN": "trending down", "CHOPPY": "choppy market"} %}
-<div class="stock-meta-row">
+  <span class="ticker-symbol">{{ asset|sym }}</span>
   {% if screen_item %}
-  <span class="meta-item"><span class="term" title="Relative Strength rank: outperformed most of the NIFTY 500 over 3/6/9/12 months, scored 0-99.">RS</span> <span class="rs-badge {{ 'strong' if screen_item.rs_rank is not none and screen_item.rs_rank >= 90 else ('pass' if screen_item.rs_rank is not none and screen_item.rs_rank >= 70 else '') }}">{{ screen_item.rs_rank if screen_item.rs_rank is not none else "—" }}</span></span>
-  {% set stance_label = "NO SETUP" if screen_item.stance == "AVOID / NO SETUP" else (screen_item.stance or "—") %}
-  {% set stance_cls = "neutral" if screen_item.stance == "AVOID / NO SETUP" else (screen_item.stance_class or "neutral") %}
-  <span class="chip {{ stance_cls }}">{{ stance_label }}</span>
-  {% endif %}
-  {% if regime %}
-  <span class="meta-item">Regime <strong>{{ regime_words.get(regime, (regime or "").lower()) }}</strong></span>
+  <span class="meta-item"><span class="term" title="Relative Strength rank: beat this % of the NIFTY 500 over 3/6/9/12 months">RS</span>
+    <span class="rs-badge {{ 'strong' if screen_item.rs_rank is not none and screen_item.rs_rank >= 90 else ('pass' if screen_item.rs_rank is not none and screen_item.rs_rank >= 70 else '') }}">{{ screen_item.rs_rank if screen_item.rs_rank is not none else "—" }}</span></span>
   {% endif %}
   <form method="post" action="/api/watchlist/{{ 'remove' if in_watchlist else 'add' }}" class="watchlist-form">
     <input type="hidden" name="symbol" value="{{ asset }}">
     <input type="hidden" name="next" value="/stock/{{ asset }}">
-    <button type="submit" class="btn {{ 'btn-ghost' if in_watchlist else '' }}">{{ '− Remove from Watchlist' if in_watchlist else '+ Add to Watchlist' }}</button>
+    <button type="submit" class="btn btn-ghost">{{ 'Remove from watchlist' if in_watchlist else '+ Watchlist' }}</button>
   </form>
 </div>
+{% if company or (screen_item and screen_item.sector) %}<div class="company">{{ company or "" }}{% if screen_item and screen_item.sector %} · {{ screen_item.sector }}{% endif %}</div>{% endif %}
+
+<div class="px-row">
+  <span class="px">₹{{ "{:,.2f}".format(metrics.close) }}</span>
+  <span class="chg {{ 'up' if metrics.chg_pct > 0 else 'down' if metrics.chg_pct < 0 }}">{{ "%+.2f"|format(metrics.chg_pct) }}%</span>
+  <span class="ohlc">O {{ "%.2f"|format(latest.open) }} · H {{ "%.2f"|format(latest.high) }} · L {{ "%.2f"|format(latest.low) }} · {{ data_asof|nicedate if data_asof else "" }}</span>
+</div>
+<div class="facts">
+  <div class="fact"><div class="k">From 52-week high</div><div class="v">{{ metrics.pct_from_high }}%</div></div>
+  <div class="fact"><div class="k">vs 50-day average</div><div class="v {{ 'down' if (metrics.pct_above_50 or 0) > 25 }}">{{ "%+.1f"|format(metrics.pct_above_50) if metrics.pct_above_50 is not none else "—" }}%</div></div>
+  <div class="fact"><div class="k">Volume vs 50-day avg</div><div class="v {{ 'up' if (metrics.vol_ratio or 0) >= 1.5 }}">{{ metrics.vol_ratio }}×</div></div>
+  <div class="fact"><div class="k">Next results</div><div class="v" style="font-size: 16px;">{{ plan.results_date|nicedate if plan and plan.results_date else "not announced" }}</div></div>
+</div>
+
+{% if plan and plan.results_in_hold %}
+<div class="alert">Results on <b>{{ plan.results_date|nicedate }}</b> — {{ plan.results_days }} days away, inside a normal holding period. A results gap can jump straight past the stop.</div>
+{% endif %}
+{% if posture.level == "DEFENSIVE" %}
+<div class="alert">Market in correction — most breakouts fail here; the plan is sized at a quarter of normal risk.</div>
+{% endif %}
+
+{% if plan %}
+{% set s = plan.setup %}
+{% set word = {"IN BUY RANGE": ("IN BUY RANGE", "go"), "BASING": ("BASING — buy only on a breakout", "wait"), "EXTENDED": ("EXTENDED — don't chase", "no"), "NO BASE YET": ("NO PROPER BASE YET", "no")}.get(s.status, (s.status, "no")) %}
+<div class="card setup-card">
+  <div class="label">Minervini setup</div>
+  <div class="status {{ word[1] }}">{{ word[0] }}</div>
+  <div class="why-text" style="margin-top: 6px;">
+    {% if s.status == "IN BUY RANGE" %}Broke out above the ₹{{ "{:,.2f}".format(s.pivot) }} pivot and is {{ s.pct_past_pivot }}% past it — inside the 5% buy range.
+    {% elif s.status == "BASING" %}{{ s.base_bars }}-day base, {{ s.base_depth_pct }}% deep. Buy point is a move through ₹{{ "{:,.2f}".format(s.pivot) }}, {{ s.pct_to_pivot }}% above here.
+    {% elif s.status == "EXTENDED" %}Too far from a proper buy point{% if s.pivot %} ({{ s.pct_past_pivot }}% past the ₹{{ "{:,.2f}".format(s.pivot) }} pivot){% else %} — {{ "%.0f"|format(metrics.pct_above_50) }}% above its 50-day average{% endif %}. Wait for it to build a new base.
+    {% else %}No tight base in the last three months — nothing to buy against yet.{% endif %}
+    {% if s.vcp %}<br><b>VCP:</b> pullbacks shrinking {{ s.contractions|join("% → ") }}% with volume drying up (algorithm-detected — verify on the chart).{% endif %}
+  </div>
+  {% if plan.tradeable %}
+  <div class="plan">
+    <div><div class="k">{{ "Buy above" if plan.order == "STOP" else "Buy at" }}</div><div class="v">₹{{ "{:,.2f}".format(plan.entry) }}</div></div>
+    <div><div class="k"><span class="term" title="1.5 × average daily range (ATR {{ plan.atr }}) below entry — the locked risk rule">Stop</span></div><div class="v down">₹{{ "{:,.2f}".format(plan.stop) }}</div></div>
+    <div><div class="k">Target (2R)</div><div class="v up">₹{{ "{:,.2f}".format(plan.target) }}</div></div>
+    <div><div class="k">Size ({{ posture.risk_pct }}% risk)</div><div class="v">{{ plan.qty }} sh</div></div>
+  </div>
+  {% if history %}<div class="why-text" style="margin-bottom: 8px;">History: in grade-{{ grade }} markets, breakouts like this reached 2R first {{ (history.hit_2r * 100)|round|int }}% of the time; letting winners run averaged {{ "%+.2f"|format(history.avg_r_trail) }}R (n={{ "{:,}".format(history.n) }}).</div>{% endif %}
+  {% if plan.wide_stop %}<div class="alert">Stop is {{ plan.stop_pct }}% away — wider than Minervini's 7–8% ceiling. The stock is too volatile for a clean entry here.</div>{% endif %}
+  <a class="btn btn-ghost" href="/predictions?symbol={{ asset|sym }}">Paper-trade this setup</a>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="card chart-card">
   <div class="chart-legend">
-    <span class="legend-item"><span class="legend-swatch" style="background:#22C55E;"></span>Up day</span>
-    <span class="legend-item"><span class="legend-swatch" style="background:#EF4444;"></span>Down day</span>
-    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#3B82F6;"></span>50 DMA</span>
-    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#F59E0B;"></span>150 DMA</span>
-    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#EF4444;"></span>200 DMA</span>
+    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#4184f3;"></span>50 DMA</span>
+    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#d4a03d;"></span>150 DMA</span>
+    <span class="legend-item"><span class="legend-swatch legend-line" style="background:#e5534b;"></span>200 DMA</span>
+    {% if plan and plan.setup.pivot %}<span class="legend-item"><span class="legend-swatch legend-line" style="background:#999;"></span>Pivot</span>{% endif %}
     <span class="legend-item"><span class="legend-swatch legend-bar"></span>Volume</span>
   </div>
   <div id="chart"></div>
@@ -215,16 +202,12 @@
   "rs_rank_70_plus": "Outperformed most of the NIFTY 500 over the last 3/6/9/12 months -- genuine relative strength, not just moving with the market.",
 } %}
 <div class="card">
-  <h3 class="supporting">Why It Qualified</h3>
+  <div class="label">Trend template — {{ screen_item.conditions_passed if screen_item else 0 }} of 8</div>
   {% if screen_item and screen_item.checklist %}
   {% if screen_item.computed_live %}
-  <div class="live-eval-note">Checked live for this stock — it's outside the NIFTY 500 screen, so RS rank (which ranks against that universe) isn't available and its condition can't pass here.</div>
+  <div class="live-eval-note">Checked live — this stock is outside the NIFTY 500 screen, so its RS rank (which ranks against that universe) isn't available.</div>
   {% endif %}
-  <div class="scorecard">
-    {% for c in screen_item.checklist %}
-    <div class="scorecard-seg {{ 'on' if c.passed else '' }}" title="{{ c.label }}"></div>
-    {% endfor %}
-  </div>
+  <div class="scorecard">{% for c in screen_item.checklist %}<div class="scorecard-seg {{ 'on' if c.passed else '' }}" title="{{ c.label }}"></div>{% endfor %}</div>
   {% for c in screen_item.checklist %}
   <div class="check-row {{ 'pass' if c.passed else 'fail' }}">
     <span class="check-badge">{{ "✓" if c.passed else "✗" }}</span>
@@ -239,163 +222,68 @@
   {% endif %}
 </div>
 
-{% set verdict_card_class = {"AVOID": "avoid", "TRADE_VALID": "trade", "WAIT": "wait", "NO_CLEAR_EDGE": "no-edge"}.get(memo.verdict, "wait") %}
+{% set verdict_card_class = {"AVOID": "avoid", "TRADE_VALID": "trade", "WAIT": "wait", "NO_CLEAR_EDGE": "no-edge"}.get(memo.verdict if memo else "", "no-edge") %}
 <div class="grid">
-  <div class="card verdict-card {{ 'sentinel' if memo.sentinel else verdict_card_class }}">
-    <h2>Setup Review</h2>
-    {% if memo.sentinel %}
-    <div class="sentinel-box">
-      <span class="sentinel-dot"></span>
-      <div>
-        <div class="sentinel-text">{{ memo.reasoning }}</div>
-        <div class="verdict-rule" style="margin-top:6px;">below 60 = no trade</div>
-      </div>
-    </div>
-    {% else %}
-    <div class="verdict-top">
-      <div id="score-gauge"></div>
-      <div>
-        {% if quality_word %}
-        <div class="setup-quality {{ quality_class }}">SETUP QUALITY: {{ quality_word }}</div>
-        <div class="setup-quality-caption">Quality of the current setup, not a probability of profit.</div>
-        {% endif %}
-        <div class="chip {{ stance_class or 'neutral' }}" style="font-size:16px; padding:7px 16px; margin-top:8px;">{{ stance or memo.verdict }}</div>
-      </div>
-    </div>
-    {% if stance_evidence %}
-    <div class="why-text" style="margin-bottom:12px;"><strong>Why:</strong> {{ stance_evidence | join(' · ') }}</div>
-    {% endif %}
-    <div class="verdict-rule">below 60 = no trade — decision support only, you decide</div>
-    <p>{{ memo.reasoning }}</p>
-    {% if memo.risk_flags %}
-    <ul class="risk-flags">
-      {% for flag in memo.risk_flags %}<li>{{ flag }}</li>{% endfor %}
-    </ul>
-    {% endif %}
-    {% if memo.invalidation %}
-    <div class="invalidation-box">
-      <h4><span class="term" title="If any of these actually happen, the case above no longer holds -- worth a re-check, not a permanent rule.">What would invalidate this</span></h4>
-      <ul class="invalidation-list">
-        {% for cond in memo.invalidation %}<li>{{ cond }}</li>{% endfor %}
-      </ul>
-    </div>
-    {% endif %}
-    {% endif %}
+  <div class="card verdict-card {{ ('sentinel' if memo.sentinel else verdict_card_class) if memo else 'no-edge' }}" id="review-card">
+    {% include "_review_card.html" %}
   </div>
-
   <div>
+    {% if signal %}
     <div class="card">
-      <h3 class="supporting">Signal</h3>
-      <details open>
-        <summary style="display:flex; align-items:center; gap:10px;">
-          <span class="chevron">&#9656;</span>
-          <span class="chip {{ 'good' if signal.direction == 'BUY' else ('bad' if signal.direction == 'SELL' else 'neutral') }}">{{ signal.direction }}</span>
-          <span class="signal-label">{{ signal_label }}</span>
-        </summary>
-        <div class="reveal" style="padding-top:12px;">
-          {% if signal.reason %}
-          <div style="color:var(--muted); font-size:15px;">{{ signal.reason }}</div>
-          {% elif signal.metadata and signal.metadata.zscore is defined %}
-          <div class="risk-line"><span class="k"><span class="term" title="How stretched the rubber band is; ±2 = fully stretched.">z-score</span> (60d)</span><span class="v">{{ "%.2f"|format(signal.metadata.zscore) }}</span></div>
-          <div class="risk-line"><span class="k">Confidence</span><span class="v">{{ "%.0f"|format(signal.confidence * 100) }}%</span></div>
-          {% endif %}
-        </div>
-      </details>
+      <div class="label">Mean-reversion signal</div>
+      <span class="chip {{ 'good' if signal.direction == 'BUY' else 'bad' }}">{{ signal.direction }}</span>
+      <div class="why-text" style="margin-top: 8px;">A separate short-term model: the price is stretched {{ "%.1f"|format(signal.metadata.zscore|abs) if signal.metadata and signal.metadata.zscore is defined else "" }}σ from its 60-day average. Not part of the Minervini case.</div>
     </div>
-
+    {% endif %}
     <div class="card">
-      <h3 class="supporting">Risk</h3>
-      <div class="risk-line">
-        <span class="k"><span class="term" title="1.5x the 14-day Average True Range below the last close -- a volatility-sized stop distance, not tied to an actual open position.">Suggested stop</span></span>
-        {% if atr_stop is not none %}<span class="v">&#8377;{{ atr_stop }} <span style="color:var(--muted); font-size:14px;">(ATR {{ atr }})</span></span>{% else %}<span class="v dim">insufficient history</span>{% endif %}
-      </div>
-      <div class="risk-line">
-        <span class="k">Position size</span>
-        {% if position_size is not none %}<span class="v">{{ position_size }}</span>{% else %}<span class="v note">You size this yourself</span>{% endif %}
-      </div>
-      <div class="risk-line">
-        <span class="k">Delivery %</span>
-        {% if delivery_pct is not none %}<span class="v">{{ delivery_pct }}</span>{% else %}<span class="v note">Coming soon</span>{% endif %}
-      </div>
+      <div class="label">News</div>
+      <div id="headlines"><div class="sentinel-box"><span class="sentinel-dot pulse"></span><span class="sentinel-text">Loading news…</span></div></div>
     </div>
   </div>
 </div>
 
-<div class="card">
-  <h3 class="supporting">Headlines</h3>
-  {% if headlines %}
-  {% for headline in headlines %}
-  <div class="headline-row">
-    <div class="headline-title">{{ headline.title }}</div>
-    <div class="headline-meta"><span class="src">{{ headline.source }}</span>{% if headline.ts %}<span class="mono">{{ headline.ts }}</span>{% endif %}</div>
-  </div>
-  {% endfor %}
-  {% else %}
-  <div class="empty-state">No matched headlines — nothing to do is also a decision.</div>
-  {% endif %}
-</div>
-
-<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="/static/js/lightweight-charts-4.2.3.js"></script>
+<script nonce="{{ csp_nonce }}">
   fetch(`/api/candles/{{ asset }}`).then(r => r.json()).then(data => {
-    const chart = LightweightCharts.createChart(document.getElementById('chart'), {
-      width: document.getElementById('chart').clientWidth,
-      height: document.getElementById('chart').clientHeight,
-      layout: { background: { color: 'transparent' }, textColor: '#9CA3AF' },
-      grid: { vertLines: { color: '#262B36' }, horzLines: { color: '#262B36' } },
-      timeScale: { borderColor: '#262B36' },
-      rightPriceScale: { borderColor: '#262B36' },
+    const el = document.getElementById('chart');
+    const chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth, height: el.clientHeight,
+      layout: { background: { color: 'transparent' }, textColor: '#999999' },
+      grid: { vertLines: { visible: false }, horzLines: { color: '#232323' } },
+      timeScale: { borderVisible: false }, rightPriceScale: { borderVisible: false },
     });
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#22C55E', downColor: '#EF4444', borderVisible: false,
-      wickUpColor: '#22C55E', wickDownColor: '#EF4444',
-      priceScaleId: 'right',
+    const candles = chart.addCandlestickSeries({
+      upColor: '#4caf50', downColor: '#e5534b', borderVisible: false, wickUpColor: '#4caf50', wickDownColor: '#e5534b',
     });
-    candlestickSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.25 } });
-    // /api/candles rows are [time, close, open, high, low, volume] -- close comes
-    // before open on the wire, not the usual OHLC order, hence the index remap here.
-    candlestickSeries.setData(data.candles.map(c => ({ time: c[0], open: c[2], high: c[3], low: c[4], close: c[1] })));
-    chart.addLineSeries({ color: '#3B82F6', lineWidth: 1 }).setData(data.sma50.map(v => ({ time: v[0], value: v[1] })));
-    chart.addLineSeries({ color: '#F59E0B', lineWidth: 1 }).setData(data.sma150.map(v => ({ time: v[0], value: v[1] })));
-    chart.addLineSeries({ color: '#EF4444', lineWidth: 1 }).setData(data.sma200.map(v => ({ time: v[0], value: v[1] })));
-
-    const volumeSeries = chart.addHistogramSeries({
-      color: '#3B82F6', priceFormat: { type: 'volume' }, priceScaleId: 'volume',
-    });
-    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-    volumeSeries.setData(data.volume.map((v, i) => ({
-      time: v[0], value: v[1],
-      color: (data.candles[i] && data.candles[i][1] >= data.candles[i][2]) ? '#22C55E' : '#EF4444',
-    })));
-
-    window.addEventListener('resize', () => chart.applyOptions({
-      width: document.getElementById('chart').clientWidth,
-      height: document.getElementById('chart').clientHeight,
-    }));
+    candles.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.25 } });
+    // /api/candles rows are [time, close, open, high, low, volume]
+    candles.setData(data.candles.map(c => ({ time: c[0], open: c[2], high: c[3], low: c[4], close: c[1] })));
+    {% if plan and plan.setup.pivot %}
+    candles.createPriceLine({ price: {{ plan.setup.pivot }}, color: '#999999', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Pivot' });
+    {% endif %}
+    const line = c => ({ color: c, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    chart.addLineSeries(line('#4184f3')).setData(data.sma50.map(v => ({ time: v[0], value: v[1] })));
+    chart.addLineSeries(line('#d4a03d')).setData(data.sma150.map(v => ({ time: v[0], value: v[1] })));
+    chart.addLineSeries(line('#e5534b')).setData(data.sma200.map(v => ({ time: v[0], value: v[1] })));
+    const vol = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'volume', lastValueVisible: false, priceLineVisible: false });
+    vol.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+    vol.setData(data.volume.map((v, i) => ({ time: v[0], value: v[1], color: (data.candles[i] && data.candles[i][1] >= data.candles[i][2]) ? '#4caf50' : '#e5534b' })));
+    const n = data.candles.length;
+    chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 130), to: n + 3 });
+    window.addEventListener('resize', () => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
   }).catch(err => console.error('candle fetch failed:', err));
 
-  {% if not memo.sentinel %}
-  {% set gauge_color = {"AVOID": "#EF4444", "TRADE_VALID": "#22C55E", "WAIT": "#F59E0B", "NO_CLEAR_EDGE": "#9CA3AF"}.get(memo.verdict, "#F59E0B") %}
-  Plotly.newPlot("score-gauge", [{
-    type: "indicator",
-    mode: "gauge+number",
-    value: {{ memo.score }},
-    number: { suffix: "", font: { size: 30, color: "#E8EAED", family: "ui-monospace, Consolas, monospace" } },
-    gauge: {
-      axis: { range: [0, 100], visible: false },
-      bar: { color: {{ gauge_color | tojson }} },
-      bgcolor: "#1D2330",
-      borderwidth: 0,
-      steps: [
-        { range: [0, 60], color: "#2B1616" },
-        { range: [60, 80], color: "#2B2010" },
-        { range: [80, 100], color: "#14251A" },
-      ],
-    },
-  }], {
-    paper_bgcolor: "transparent",
-    margin: { t: 8, b: 0, l: 10, r: 10 },
-  }, { displayModeBar: false, responsive: true });
+  fetch('/api/headlines/{{ asset }}').then(r => r.text()).then(html => { document.getElementById('headlines').innerHTML = html; })
+    .catch(() => { document.getElementById('headlines').innerHTML = '<div class="empty-state">News could not be loaded right now.</div>'; });
+
+  {% if memo is none %}
+  fetch('/api/memo/{{ asset }}').then(r => r.text()).then(html => {
+    const card = document.getElementById('review-card');
+    card.innerHTML = html;
+    const verdict = (card.querySelector('.chip') || {}).textContent || '';
+    card.classList.remove('no-edge');
+    card.classList.add(/BULLISH/.test(verdict) ? 'trade' : /WATCH/.test(verdict) ? 'wait' : 'no-edge');
+  }).catch(() => { document.getElementById('review-card').innerHTML = '<div class="label">Setup review</div><div class="empty-state">The review could not be written right now — try again in a minute.</div>'; });
   {% endif %}
 </script>
 {% endif %}

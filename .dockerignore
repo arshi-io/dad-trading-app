@@ -1,0 +1,14 @@
+.venv
+.venv_clean_check
+**/__pycache__
+.pytest_cache
+.env
+.env.*
+!.env.example
+*.db
+*.log
+code/data/snapshots/*
+code/data/prices/*
+raw
+data
+tmp_validate_memo.py

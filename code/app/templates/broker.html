@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Broker — Papa Terminal{% endblock %}
+{% block extra_head %}
+<style>
+  .kv { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 6px 0 14px; }
+  .kv > div { padding: 10px 12px 10px 0; min-width: 0; }
+  .kv > div + div { padding-left: 12px; border-left: 1px solid var(--border); }
+  .kv .v { font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
+  .kv .s { font-size: 12px; color: var(--muted); }
+  .rows { border-top: 1px solid var(--border); margin-bottom: 12px; }
+  .r { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .r .k { color: var(--muted); }
+  .r .v { text-align: right; overflow-wrap: anywhere; min-width: 0; }
+  .form { display: grid; gap: 10px; max-width: 360px; }
+  .form input { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; padding: 9px 12px; border-radius: 4px; }
+  .note { font-size: 13px; color: var(--amber); margin: 8px 0; }
+  .msg { font-size: 14px; margin-bottom: 12px; }
+  .help { color: var(--muted); font-size: 13px; }
+  .steps { color: var(--muted); font-size: 13px; padding-left: 18px; margin: 6px 0 0; }
+  @media (max-width: 600px) { .kv { grid-template-columns: 1fr 1fr; } .kv > div:nth-child(3) { border-left: none; padding-left: 0; } .kv > div:nth-child(n+3) { border-top: 1px solid var(--border); } }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Broker</h1>
+{% if message %}<div class="msg {{ 'up' if 'Connected' in message else 'down' if 'failed' in message else 'muted' }}">{{ message }}</div>{% endif %}
+
+<div class="card">
+  <div class="label">Live prices</div>
+  <div class="kv">
+    <div><div class="label" style="margin:0;">Market</div><div class="v">{{ session.phase|capitalize|replace("_", "-") }}</div></div>
+    <div><div class="label" style="margin:0;">Price source</div><div class="v">{{ {"broker": "Broker", "yfinance_delayed": "Yahoo (delayed)", "simulated": "Simulated"}.get(provider, provider) }}</div></div>
+    <div><div class="label" style="margin:0;">Symbols</div><div class="v">{{ feed.count }}</div></div>
+    <div><div class="label" style="margin:0;">Last update</div><div class="v">{{ feed.last_poll|nicetime if feed.last_poll else "—" }}</div></div>
+  </div>
+  {% if provider == "simulated" %}<div class="note">Prices are simulated for testing — not real market data — until the broker connection is live.</div>{% endif %}
+  {% if feed.error %}<div class="note">Last price fetch failed: {{ feed.error }}</div>{% endif %}
+</div>
+
+<div class="card">
+  <div class="label">Choice FinX</div>
+  {% if not choice.configured %}
+    <p class="help">No Choice API key yet. Generate one on finx.choiceindia.com (API section) for this server's static IP and put it in <code>.env</code> as <code>CHOICE_API_KEY</code>.</p>
+  {% elif not choice.valid_format %}
+    <div class="note">The CHOICE_API_KEY in .env isn't a FinX key (it should be a long token in three dot-separated parts).</div>
+  {% else %}
+    <div class="rows">
+      <div class="r"><span class="k">Account</span><span class="v">{{ choice.user }}</span></div>
+      <div class="r"><span class="k">API key</span>
+        <span class="v {{ 'down' if choice.expired else 'up' if choice.days_left > 7 else '' }}">{% if choice.expired %}Expired {{ choice.expires|nicetime }}{% else %}Valid till {{ choice.expires|nicetime }} · {{ choice.days_left }} days left{% endif %}</span></div>
+      <div class="r"><span class="k">Locked to IP</span><span class="v">{{ choice.locked_ip }}</span></div>
+      <div class="r"><span class="k">This server's IP now</span>
+        <span class="v {{ 'up' if choice.ip_match else 'down' if choice.ip_match is sameas false }}">
+          {{ (choice.server_ips.ipv6 if choice.locked_is_ipv6 else choice.server_ips.ipv4) or "couldn't check" }}
+          {% if choice.ip_match %} — matches{% elif choice.ip_match is sameas false %} — doesn't match{% endif %}</span></div>
+      <div class="r"><span class="k">Connection</span>
+        <span class="v {{ 'up' if choice.connected else 'muted' }}">{% if choice.connected %}Connected since {{ choice.since|nicetime }} · {{ choice.scrips }} NSE symbols mapped{% else %}Not connected{% endif %}</span></div>
+    </div>
+
+    {% if choice.ip_match is sameas false %}
+    <div class="note">Choice will refuse logins from this server: its IP no longer matches the one the key is locked to. Register this server's static IP on finx.choiceindia.com and generate a new key.</div>
+    {% elif choice.locked_is_ipv6 %}
+    <div class="note">The key is locked to a home IPv6 address. On Jio, Windows rotates that address about daily, so expect this to stop matching soon. A static IPv4 (from Jio, or a small cloud server) is the durable fix.</div>
+    {% endif %}
+    {% if choice.last_error %}<div class="note">Last login error: {{ choice.last_error }}</div>{% endif %}
+
+    {% if choice.missing %}
+      <p class="help" style="margin-top: 10px;">To connect, add to <code>.env</code> and restart:</p>
+      <ol class="steps">
+        {% if "CHOICE_VENDOR_ID" in choice.missing %}<li><code>CHOICE_VENDOR_ID</code> — the vendor / application name the key was generated under on the FinX portal.</li>{% endif %}
+        {% if "CHOICE_MOBILE" in choice.missing %}<li><code>CHOICE_MOBILE</code> — the mobile number registered on the Choice account (10 digits).</li>{% endif %}
+      </ol>
+    {% elif choice.connected %}
+      <form method="post" action="/broker/choice/disconnect" style="margin-top: 10px;"><button class="btn btn-ghost" type="submit">Disconnect</button></form>
+    {% else %}
+      <p class="help" style="margin-top: 10px;">Login is automatic — no password or SMS to type. It also runs by itself at 08:55 on weekdays.</p>
+      <form method="post" action="/broker/choice/connect"><button class="btn" type="submit">Connect to Choice</button></form>
+    {% endif %}
+
+    {% if choice.raw_sample %}
+    <div class="note" style="margin-top: 12px;">Connected, but the quote format wasn't recognised — prices are not being used. Raw sample for mapping:</div>
+    <pre style="white-space: pre-wrap; font-size: 11px; color: var(--muted); background: var(--surface-2); padding: 8px; border-radius: 4px;">{{ choice.raw_sample }}</pre>
+    {% endif %}
+    <p class="help" style="margin-top: 10px;">The connection will be read-only: it fetches prices and cannot place orders.</p>
+  {% endif %}
+</div>
+
+{% if status.configured %}
+<div class="card">
+  <div class="label">Motilal Oswal</div>
+  <p class="help">{{ "Connected since " ~ (status.since|nicetime) if status.connected else "Configured but not connected." }}</p>
+  {% if status.connected %}<form method="post" action="/broker/disconnect"><button class="btn btn-ghost" type="submit">Disconnect</button></form>
+  {% else %}
+  {% if not secure %}<div class="note">This connection isn't encrypted (plain http on the home Wi-Fi), so a password typed here crosses the network readable.</div>{% endif %}
+  <form class="form" method="post" action="/broker/connect" autocomplete="off">
+    <input type="password" name="password" placeholder="Motilal password" required autocomplete="off" aria-label="Motilal password" />
+    <input type="text" name="totp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit authenticator code" autocomplete="one-time-code" aria-label="Authenticator code" />
+    <button class="btn" type="submit">Connect</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

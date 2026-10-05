@@ -3,46 +3,56 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="data:," />
   <title>{% block title %}Papa Terminal{% endblock %}</title>
   <style>
+    /* Design system: Kite-style restraint. Neutral surfaces, one accent, colour only where it
+       carries meaning (P&L, change, status), quiet uppercase section labels, hairline dividers. */
     :root {
-      --bg: #0E1117;
-      --surface: #171B23;
-      --surface-2: #1D2330;
-      --border: #262B36;
-      --border-strong: #333A48;
-      --text: #E8EAED;
-      --muted: #9CA3AF;
-      --muted-2: #6B7280;
+      --bg: #141414;
+      --surface: #1b1b1b;
+      --surface-2: #232323;
+      --border: #2a2a2a;
+      --border-strong: #363636;
+      --text: #e4e4e4;
+      --muted: #999999;
+      --muted-2: #6f6f6f;
 
-      --green: #22C55E;   --green-dim: #14251A;
-      --red: #EF4444;     --red-dim: #2B1616;
-      --amber: #F59E0B;   --amber-dim: #2B2010;
-      --blue: #3B82F6;    --blue-dim: #131E33;
+      --green: #4caf50;   --green-dim: rgba(76, 175, 80, 0.12);
+      --red: #e5534b;     --red-dim: rgba(229, 83, 75, 0.12);
+      --amber: #d4a03d;   --amber-dim: rgba(212, 160, 61, 0.12);
+      --blue: #4184f3;    --blue-dim: rgba(65, 132, 243, 0.12);
 
-      --radius: 12px;
-      --nav-height: 64px;
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-      --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", "Consolas", "Roboto Mono", monospace;
+      --radius: 6px;
+      --nav-height: 52px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: var(--font-sans);
     }
     * { box-sizing: border-box; }
     html { -webkit-text-size-adjust: 100%; }
     body {
       font-family: var(--font-sans);
-      font-size: 18px;
-      line-height: 1.6;
+      font-size: 15px;
+      line-height: 1.55;
       background: var(--bg);
       color: var(--text);
       margin: 0;
+      font-feature-settings: "tnum" 1;
     }
-    a { color: var(--blue); }
-    h1 { font-size: 30px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 4px 0; }
-    h2 { font-size: 22px; font-weight: 700; margin: 0 0 14px 0; }
-    h3 { font-size: 18px; font-weight: 700; margin: 0 0 10px 0; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 16px 0; }
+    h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px 0; }
+    h3 { font-size: 15px; font-weight: 600; margin: 0 0 8px 0; }
+    h3.supporting, .label {
+      font-size: 12px; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 10px 0;
+    }
     p { margin: 0 0 10px 0; }
-    .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+    .mono { font-variant-numeric: tabular-nums; }
+    .up { color: var(--green); } .down { color: var(--red); } .muted { color: var(--muted); }
 
-    /* ---- chrome: nav + status bar ---- */
+    /* ---- top bar ---- */
     nav {
       position: sticky; top: 0; z-index: 30;
       display: flex; align-items: center;
@@ -50,293 +60,129 @@
       background: var(--surface);
       padding: 0 20px;
       border-bottom: 1px solid var(--border);
-      /* No overflow rule on nav itself -- overflow-x:auto here would force
-         overflow-y:auto too (CSS quirk: one axis non-visible forces the
-         other to auto), clipping the search dropdown below it. Only the
-         tab strip scrolls; the dropdown lives outside that clipped box. */
     }
-    /* Desktop: these wrappers are invisible to layout (display:contents) so
-       brand/tabs/search/logout are direct flex children of <nav>, exactly
-       as before the hamburger existed. Mobile overrides give them real
-       boxes -- see the max-width:600px block. */
     .nav-bar { display: contents; }
     .nav-menu { display: contents; }
     .menu-toggle { display: none; }
-
-    .nav-tabs {
-      display: flex; align-items: center;
-      overflow-x: auto;
-      min-width: 0;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: thin;
-    }
-    .brand {
-      display: flex; align-items: center; gap: 8px;
-      font-family: var(--font-mono);
-      font-weight: 700;
-      font-size: 16px;
-      letter-spacing: 0.06em;
-      color: var(--text);
-      padding-right: 18px;
-      margin-right: 6px;
-      border-right: 1px solid var(--border);
-      white-space: nowrap;
-    }
-    .brand .dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 6px var(--green);
-      flex-shrink: 0;
-    }
+    .nav-tabs { display: flex; align-items: center; overflow-x: auto; min-width: 0; scrollbar-width: none; }
+    .brand { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; margin-right: 18px; }
+    .quote { font-size: 13px; color: var(--muted); white-space: nowrap; margin-right: 20px; }
+    .quote b { color: var(--text); font-weight: 500; margin: 0 4px; }
     nav a.tab {
-      color: var(--muted);
-      text-decoration: none;
-      padding: 0 16px;
-      height: var(--nav-height);
-      display: inline-flex; align-items: center;
-      font-size: 17px;
-      font-weight: 600;
-      white-space: nowrap;
-      border-bottom: 3px solid transparent;
-      transition: color .15s ease, border-color .15s ease;
+      color: var(--muted); padding: 0 12px; height: var(--nav-height);
+      display: inline-flex; align-items: center; font-size: 14px; font-weight: 500;
+      white-space: nowrap; border-bottom: 2px solid transparent;
     }
+    nav a.tab:hover { color: var(--text); text-decoration: none; }
     nav a.tab.active { color: var(--text); border-bottom-color: var(--blue); }
-    nav a.tab:not(.active):hover { color: var(--text); }
 
-    .nav-search { display: flex; align-items: center; gap: 8px; margin-left: auto; padding-left: 16px; flex-shrink: 0; }
+    .nav-search { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-left: 16px; flex-shrink: 0; }
     .nav-search input[type="text"] {
-      background: var(--surface-2);
-      border: 1px solid var(--border-strong);
-      color: var(--text);
-      font-family: var(--font-sans);
-      font-size: 16px;
-      padding: 9px 14px;
-      border-radius: 8px;
-      width: 200px;
-      outline: none;
-      transition: border-color .15s ease;
+      background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+      font: inherit; font-size: 14px; padding: 7px 12px; border-radius: 4px; width: 210px; outline: none;
     }
     .nav-search input[type="text"]::placeholder { color: var(--muted-2); }
     .nav-search input[type="text"]:focus { border-color: var(--blue); }
-    .nav-search .btn-ghost { padding: 9px 16px; font-size: 15px; white-space: nowrap; }
-    .logout-link {
-      color: var(--muted); font-size: 15px; text-decoration: none;
-      margin-left: 14px; padding: 9px 4px; white-space: nowrap; flex-shrink: 0;
-    }
-    .logout-link:hover { color: var(--text); text-decoration: underline; }
+    .nav-search .btn-ghost { padding: 7px 12px; font-size: 14px; min-height: 0; }
+    .logout-link { color: var(--muted); font-size: 13px; margin-left: 14px; white-space: nowrap; }
+    .logout-link:hover { color: var(--text); }
 
-    /* Stock Room's own top-of-page search -- full content-size, per papa-ux 18px+ */
-    .stock-search { display: flex; gap: 10px; flex-wrap: wrap; }
+    .stock-search { display: flex; gap: 8px; }
     .stock-search input[type="text"] {
-      flex: 1; min-width: 220px;
-      background: var(--surface-2);
-      border: 1px solid var(--border-strong);
-      color: var(--text);
-      font-family: var(--font-sans);
-      font-size: 18px;
-      padding: 14px 16px;
-      border-radius: 8px;
-      outline: none;
-      transition: border-color .15s ease;
+      flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+      font: inherit; padding: 9px 12px; border-radius: 4px; outline: none;
     }
-    .stock-search input[type="text"]::placeholder { color: var(--muted-2); }
     .stock-search input[type="text"]:focus { border-color: var(--blue); }
 
-    /* ---- typeahead dropdown: purely local, filters an in-memory JS array,
-       zero network activity while typing ---- */
+    /* ---- typeahead ---- */
     .typeahead-wrap { position: relative; flex: 1; }
     .typeahead-dropdown {
-      position: absolute; top: calc(100% + 6px); left: 0; right: 0;
-      background: var(--surface-2);
-      border: 1px solid var(--border-strong);
-      border-radius: 10px;
-      overflow-y: auto;
-      max-height: 320px;
-      z-index: 50;
-      box-shadow: 0 12px 28px rgba(0,0,0,0.45);
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; min-width: 260px;
+      background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 4px;
+      overflow-y: auto; max-height: 320px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
     .typeahead-dropdown[hidden] { display: none; }
-    .typeahead-item {
-      display: flex; align-items: baseline; gap: 10px;
-      padding: 12px 14px;
-      cursor: pointer;
-      border-bottom: 1px solid var(--border);
-    }
+    .typeahead-item { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
     .typeahead-item:last-child { border-bottom: none; }
     .typeahead-item:hover, .typeahead-item.active { background: var(--border); }
-    .ta-symbol { font-family: var(--font-mono); font-weight: 700; color: var(--text); white-space: nowrap; }
-    .ta-fallback .ta-name { color: var(--blue); white-space: normal; overflow: visible; font-weight: 600; }
-    .ta-name { color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ta-symbol { font-weight: 600; color: var(--text); white-space: nowrap; font-size: 14px; }
+    .ta-fallback .ta-name { color: var(--blue); white-space: normal; }
+    .ta-name { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    main { padding: 24px; max-width: 1160px; margin: 0 auto; }
+    main { padding: 20px 24px 48px; max-width: 1080px; margin: 0 auto; }
 
-    .status-bar {
-      display: flex; align-items: center; gap: 10px;
-      color: var(--muted);
-      font-size: 15px;
-      margin-bottom: 20px;
-      padding-bottom: 14px;
-      border-bottom: 1px solid var(--border);
-    }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .status-bar { display: flex; align-items: center; gap: 8px; color: var(--muted-2); font-size: 12px; margin-bottom: 18px; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
     .status-dot.stale { background: var(--amber); }
-    .status-bar .ts { color: var(--text); }
-
-    .stale-banner {
-      display: flex; align-items: center; gap: 10px;
-      background: var(--amber-dim);
-      border: 1px solid var(--amber);
-      border-left: 4px solid var(--amber);
-      color: var(--amber);
-      padding: 14px 18px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      font-weight: 700;
-      font-size: 17px;
-    }
+    .status-bar .ts { color: var(--muted); }
+    .stale-banner { color: var(--amber); font-size: 14px; margin-bottom: 16px; padding-left: 10px; border-left: 2px solid var(--amber); }
 
     /* ---- surfaces ---- */
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 22px 24px;
-      margin-bottom: 20px;
-    }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 16px; }
     .card-2 { background: var(--surface-2); }
     .term { border-bottom: 1px dotted var(--muted-2); cursor: help; }
+    .empty-state { color: var(--muted); padding: 18px 4px; font-size: 14px; }
 
-    .empty-state {
-      color: var(--muted);
-      padding: 30px 20px;
-      text-align: center;
-      border: 1px dashed var(--border-strong);
-      border-radius: 10px;
-      font-size: 17px;
-    }
-
-    /* ---- buttons ---- */
+    /* ---- buttons: blue = act, quiet outline = everything else ---- */
     .btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: var(--blue);
-      color: #fff;
-      text-decoration: none;
-      padding: 12px 20px;
-      border-radius: 8px;
-      font-weight: 700;
-      font-size: 17px;
-      border: 1px solid var(--blue);
-      transition: filter .15s ease;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      background: var(--blue); color: #fff; padding: 8px 16px; min-height: 36px;
+      border-radius: 4px; font: inherit; font-size: 14px; font-weight: 600;
+      border: 1px solid var(--blue); cursor: pointer;
     }
-    .btn:hover { filter: brightness(1.12); }
+    .btn:hover { filter: brightness(1.08); text-decoration: none; }
     .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border-strong); }
-    .btn-ghost:hover { border-color: var(--muted); filter: none; }
+    .btn-ghost:hover { border-color: var(--muted-2); filter: none; }
+    .btn[disabled] { opacity: .45; cursor: default; filter: none; }
 
-    /* ---- status words + chips (word + color, never color alone) ---- */
-    .word-good { color: var(--green); font-weight: 700; }
-    .word-bad  { color: var(--red);   font-weight: 700; }
-    .word-wait { color: var(--amber); font-weight: 700; }
-
+    /* ---- status words + tags (word + colour, never colour alone) ---- */
+    .word-good { color: var(--green); font-weight: 600; }
+    .word-bad  { color: var(--red);   font-weight: 600; }
+    .word-wait { color: var(--amber); font-weight: 600; }
     .chip {
-      display: inline-flex; align-items: center; gap: 7px;
-      padding: 5px 13px;
-      border-radius: 999px;
-      font-weight: 700;
-      font-size: 14px;
-      letter-spacing: 0.03em;
-      border: 1px solid currentColor;
-      white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 7px; border-radius: 3px;
+      font-weight: 600; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+      white-space: nowrap; color: var(--muted); background: var(--surface-2);
     }
     .chip.good { color: var(--green); background: var(--green-dim); }
     .chip.bad  { color: var(--red);   background: var(--red-dim); }
     .chip.wait { color: var(--amber); background: var(--amber-dim); }
-    .chip.neutral { color: var(--muted); background: var(--surface-2); border-color: var(--border-strong); }
+    .chip.neutral { color: var(--muted); background: var(--surface-2); }
 
-    /* ---- disclosure (details/summary) reveal ---- */
+    /* ---- disclosure ---- */
     summary { cursor: pointer; list-style: none; }
     summary::-webkit-details-marker { display: none; }
-    .chevron {
-      display: inline-block;
-      color: var(--muted-2);
-      font-family: var(--font-mono);
-      transition: transform .18s ease, color .18s ease;
-    }
-    details[open] .chevron { transform: rotate(90deg); color: var(--text); }
-    @keyframes revealDown {
-      from { opacity: 0; transform: translateY(-4px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    details[open] > .reveal { animation: revealDown .18s ease; }
+    .chevron { display: inline-block; color: var(--muted-2); transition: transform .15s ease; }
+    details[open] .chevron { transform: rotate(90deg); }
 
-    @media (max-width: 900px) {
-      .nav-search input[type="text"] { width: 140px; }
-    }
+    @media (max-width: 900px) { .nav-search input[type="text"] { width: 150px; } .quote { display: none; } }
 
-    /* ============ MOBILE (<=600px): real device widths, 375-430px ============ */
+    /* ============ phones ============ */
     @media (max-width: 600px) {
-      html { font-size: 16px; }
       body { font-size: 16px; }
-      main { padding: 16px; }
-      h1 { font-size: 24px; }
-      h2 { font-size: 20px; }
-      h3 { font-size: 17px; }
-
-      /* ---- hamburger nav ---- */
+      main { padding: 14px 16px 40px; }
+      h1 { font-size: 19px; }
       nav { flex-wrap: wrap; align-items: stretch; padding: 0; }
-      .nav-bar {
-        display: flex; align-items: center; justify-content: space-between;
-        width: 100%; padding: 10px 16px; min-height: var(--nav-height);
-      }
-      .brand { border-right: none; padding-right: 0; margin-right: 0; font-size: 15px; }
+      .nav-bar { display: flex; align-items: center; width: 100%; padding: 0 8px 0 16px; min-height: var(--nav-height); }
+      .brand { margin-right: 12px; }
+      .quote { display: inline; margin-right: auto; font-size: 12px; }
       .menu-toggle {
-        display: flex; align-items: center; justify-content: center;
-        width: 44px; height: 44px; flex-shrink: 0;
-        background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 8px;
-        color: var(--text); font-size: 22px; line-height: 1; cursor: pointer;
-        -webkit-tap-highlight-color: transparent;
+        display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+        background: transparent; border: none; color: var(--text); font-size: 20px; cursor: pointer;
       }
-      .menu-toggle:active { background: var(--border-strong); }
-
-      .nav-menu {
-        display: none;
-        width: 100%; padding: 6px 16px 16px 16px;
-        border-top: 1px solid var(--border);
-      }
+      .nav-menu { display: none; width: 100%; padding: 4px 16px 12px; border-top: 1px solid var(--border); }
       nav.menu-open .nav-menu { display: block; }
-
-      .nav-tabs {
-        display: flex; flex-direction: column; align-items: stretch;
-        overflow-x: visible; gap: 4px; margin-bottom: 14px;
-      }
-      nav a.tab {
-        height: auto; min-height: 48px;
-        padding: 13px 16px;
-        border-bottom: none; border-left: 3px solid transparent;
-        border-radius: 8px; background: var(--surface-2);
-        font-size: 17px;
-      }
-      nav a.tab.active { border-left-color: var(--blue); background: var(--blue-dim); }
-      nav a.tab:not(.active):active { background: var(--border-strong); }
-
-      .nav-search {
-        width: 100%; margin: 0 0 14px 0; padding-left: 0;
-        flex-direction: column; align-items: stretch; gap: 10px;
-      }
-      .nav-search input[type="text"] { width: 100%; min-height: 48px; font-size: 16px; }
-      .nav-search .btn-ghost { width: 100%; min-height: 48px; font-size: 16px; }
-
-      .logout-link {
-        display: block; width: 100%; text-align: center;
-        min-height: 48px; padding: 13px 4px; margin: 0;
-        border-top: 1px solid var(--border); border-radius: 8px;
-        font-size: 16px;
-      }
-
-      /* ---- general mobile text floor + breathing room ---- */
-      .chip { font-size: 16px; }
-      .card { padding: 20px; margin-bottom: 16px; }
-      .btn, .btn-ghost { min-height: 48px; font-size: 16px; }
-      a, button, input, select, summary { font-size: max(16px, 1em); }
+      .nav-tabs { flex-direction: column; align-items: stretch; margin-bottom: 10px; }
+      nav a.tab { height: auto; min-height: 46px; padding: 12px 2px; border-bottom: 1px solid var(--border); font-size: 16px; }
+      nav a.tab.active { border-bottom-color: var(--border); color: var(--blue); }
+      .nav-search { width: 100%; margin: 0 0 8px; padding-left: 0; }
+      .nav-search input[type="text"] { width: 100%; min-height: 44px; font-size: 16px; }
+      .nav-search .btn-ghost { min-height: 44px; }
+      .logout-link { display: block; padding: 10px 2px; margin: 0; font-size: 14px; }
+      .card { padding: 16px; }
+      .btn { min-height: 44px; font-size: 15px; }
+      input, select, textarea, button { font-size: 16px; }
     }
   </style>
   {% block extra_head %}{% endblock %}
@@ -344,7 +190,8 @@
 <body>
   <nav id="site-nav">
     <div class="nav-bar">
-      <span class="brand"><span class="dot"></span>PAPA TERMINAL</span>
+      <span class="brand">Papa Terminal</span>
+      {% if nav_nifty and nav_nifty.close %}<span class="quote">NIFTY 50<b>{{ "{:,.2f}".format(nav_nifty.close) }}</b>{% if nav_nifty.chg_pct is defined and nav_nifty.chg_pct is not none %}<span class="{{ 'up' if nav_nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nav_nifty.chg_pct) }}%</span>{% endif %}</span>{% endif %}
       <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-menu">
         <span aria-hidden="true">&#9776;</span>
       </button>
@@ -352,12 +199,13 @@
     <div class="nav-menu" id="nav-menu">
       <div class="nav-tabs">
         <a href="/" class="tab {{ 'active' if active_tab == 'today' else '' }}">Today</a>
-        <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Minervini Screen</a>
-        <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Spread Trades</a>
+        <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Screen</a>
+        <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Pairs</a>
         <a href="/stock/RELIANCE.NS" class="tab {{ 'active' if active_tab == 'stock' else '' }}">Stock Room</a>
-        <a href="/predictions" class="tab {{ 'active' if active_tab == 'predictions' else '' }}">Trade Predictions</a>
+        <a href="/predictions" class="tab {{ 'active' if active_tab == 'predictions' else '' }}">Paper Trading</a>
+        <a href="/broker" class="tab {{ 'active' if active_tab == 'broker' else '' }}">Broker</a>
       </div>
-      <form class="nav-search" onsubmit="event.preventDefault(); papaGoToTicker(document.getElementById('nav-ticker-input').value);">
+      <form class="nav-search" data-ticker-form="nav-ticker-input">
         <div class="typeahead-wrap">
           <input id="nav-ticker-input" type="text" autocomplete="off"
                  placeholder="Search any NSE stock&hellip;" aria-label="Search any NSE stock" />
@@ -368,7 +216,7 @@
       <a href="/logout" class="logout-link">Logout</a>
     </div>
   </nav>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (function () {
       const toggle = document.getElementById('menu-toggle');
       const nav = document.getElementById('site-nav');
@@ -389,9 +237,9 @@
     <div class="status-bar">
       <span class="status-dot {{ 'stale' if stale else '' }}"></span>
       {% if stale %}
-      <span>DATA FROM <span class="ts mono">{{ (generated_at.split("T")[0] if generated_at else "unknown") }}</span> — today's analysis hasn't completed</span>
+      <span>Data from <span class="ts">{{ generated_at|nicedate if generated_at else "unknown" }}</span> — tonight's update hasn't finished</span>
       {% else %}
-      <span>Market data: <span class="ts mono">{{ market_data_label or "unknown" }}</span> &middot; Analysis: <span class="ts mono">{{ analysis_age_label or "unknown" }}</span></span>
+      <span>Prices as of <span class="ts">{{ data_asof | nicedate if data_asof else "—" }} close</span> &middot; updated <span class="ts">{{ generated_at | nicetime if generated_at else "—" }}</span></span>
       {% endif %}
     </div>
     {% if stale %}
@@ -399,12 +247,14 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
-  <script>
-    // Full NIFTY 500 symbol+name list, loaded once per page as plain data --
-    // typing filters this in-memory array only. Zero network requests fire
-    // until a stock is actually selected (then it's a normal page nav to
-    // /stock/{ticker}, not a fetch).
-    const PAPA_TICKER_DIRECTORY = {{ ticker_directory | tojson }};
+  <script nonce="{{ csp_nonce }}">
+    // NIFTY 500 symbol+name list for the typeahead: one cached download (browser keeps it a day)
+    // instead of 30 KB repeated inside every page. Typing filters this in-memory array only.
+    let PAPA_TICKER_DIRECTORY = [];
+    fetch('/api/tickers.json', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (d) { PAPA_TICKER_DIRECTORY = d; document.dispatchEvent(new Event('papa:tickers')); })
+      .catch(function () {});
 
     // Normalizes free-typed input ("reliance", "RELIANCE ", "reliance.ns") to
     // a yfinance-style NSE ticker and navigates to its Stock Room page.
@@ -511,6 +361,14 @@
     }
 
     papaAttachTypeahead('nav-ticker-input', 'nav-ticker-dropdown');
+
+    // Search forms: inline handlers are blocked by the CSP, so wire them up here.
+    document.querySelectorAll('form[data-ticker-form]').forEach(function (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        papaGoToTicker(document.getElementById(form.dataset.tickerForm).value);
+      });
+    });
   </script>
 </body>
 </html>

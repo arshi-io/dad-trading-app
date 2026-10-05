@@ -1,0 +1,10 @@
+{% if headlines %}
+{% for h in headlines %}
+<div class="headline-row">
+  <div class="headline-title">{% if h.link and (h.link.startswith('https://') or h.link.startswith('http://')) %}<a href="{{ h.link }}" target="_blank" rel="noopener noreferrer">{{ h.title }}</a>{% else %}{{ h.title }}{% endif %}</div>
+  <div class="headline-meta"><span class="src">{{ h.source }}</span>{{ h.ts|nicetime }}</div>
+</div>
+{% endfor %}
+{% else %}
+<div class="empty-state">No news naming this company in the last month.</div>
+{% endif %}

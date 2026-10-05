@@ -200,6 +200,9 @@ def build_bundle(
     trend_template: Optional[Dict[str, Any]] = None,
     market_regime: Optional[str] = None,
     delivery_pct: Optional[float] = None,
+    setup: Optional[Dict[str, Any]] = None,
+    market: Optional[Dict[str, Any]] = None,
+    results_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Full evidence bundle for the memo prompt.
 
@@ -212,15 +215,24 @@ def build_bundle(
     passed through as None rather than a fake number so the LLM can say so
     honestly instead of inventing a figure.
     """
-    return {
-        "ticker": ticker,
-        "signal": signal or {},
+    regime_words = {"TRENDING_UP": "uptrend", "TRENDING_DOWN": "correction / downtrend", "CHOPPY": "choppy, no clear trend"}
+    bundle: Dict[str, Any] = {
+        "ticker": ticker.replace(".NS", ""),
         "headlines": headlines or [],
-        "diary": diary or [],
         "trend_template": trend_template,
-        "market_regime": market_regime,
-        "delivery_pct": delivery_pct,
+        "market": {"trend": regime_words.get(market_regime, market_regime), **(market or {})} if market_regime else market,
+        "setup": setup,
+        "next_results_date": results_date,
     }
+    # Only evidence that exists: an inactive signal or an unwired field is noise the model
+    # would otherwise dutifully list as a "risk".
+    if signal and signal.get("direction") in ("BUY", "SELL"):
+        bundle["mean_reversion_signal"] = signal
+    if delivery_pct is not None:
+        bundle["delivery_pct"] = delivery_pct
+    if diary:
+        bundle["diary"] = diary
+    return bundle
 
 
 # Exchange suffixes ("RELIANCE.NS" -> "ns") and single-char fragments (from
@@ -230,27 +242,44 @@ def build_bundle(
 _TOKEN_STOPWORDS = {"ns", "bo"}
 
 
-def match_headlines(ticker: str, headlines: List[Dict[str, Any]], limit: int = 5) -> List[Dict[str, Any]]:
-    """Select the most relevant headlines for a ticker using a lightweight keyword matcher."""
+_NAME_STOPWORDS = {"the", "india", "indian", "limited", "ltd", "ltd.", "industries", "company", "corporation", "and", "of", "bank"}
+HEADLINE_MAX_AGE = timedelta(days=30)
+
+
+def _headline_age_ok(item: Dict[str, Any]) -> bool:
+    ts = item.get("ts")
+    if not ts:
+        return True
+    try:
+        when = datetime.fromisoformat(str(ts))
+    except ValueError:
+        return True
+    now = datetime.now(when.tzinfo) if when.tzinfo else datetime.now()
+    return now - when <= HEADLINE_MAX_AGE
+
+
+def match_headlines(ticker: str, headlines: List[Dict[str, Any]], limit: int = 5, company_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Headlines that actually name this company, newest month only. Generic market news is
+    left out: it isn't evidence about this stock and it crowded out the real matches."""
     if not headlines:
         return []
     tokens = {
-        token.lower() for token in re.split(r"[^a-z0-9]+", ticker.lower())
-        if token and len(token) >= 2 and token.lower() not in _TOKEN_STOPWORDS
+        token for token in re.split(r"[^a-z0-9]+", ticker.lower())
+        if len(token) >= 3 and token not in _TOKEN_STOPWORDS
     }
+    if company_name:
+        words = [w for w in re.split(r"[^a-z0-9]+", company_name.lower()) if w and w not in _NAME_STOPWORDS]
+        if words and len(words[0]) >= 3:
+            tokens.add(words[0])
+        if len(words) >= 2:
+            tokens.add(f"{words[0]} {words[1]}")
     scored: List[tuple[int, Dict[str, Any]]] = []
     for item in headlines:
-        title = str(item.get("title", "")).lower()
-        text = title + " " + str(item.get("source", "")).lower()
-        score = 0
-        for token in tokens:
-            if token and token in text:
-                score += 3
-        for keyword in ("results", "rbi", "expiry", "earnings", "policy", "bank", "infra", "oil", "fii"):
-            if keyword in text:
-                score += 1
-        scored.append((score, item))
-    scored.sort(key=lambda pair: (-pair[0], pair[1].get("title", "")))
+        title = " ".join(re.split(r"[^a-z0-9]+", str(item.get("title", "")).lower()))
+        score = sum(3 for token in tokens if re.search(rf"\b{re.escape(token)}\b", title))
+        if score and _headline_age_ok(item):
+            scored.append((score, item))
+    scored.sort(key=lambda pair: (pair[0], str(pair[1].get("ts", ""))), reverse=True)
     return [item for _, item in scored[:limit]]
 
 
@@ -274,16 +303,21 @@ def generate_memo(bundle: Dict[str, Any], ticker: str, snapshot_date: Optional[s
         "Schema: {\"score\": 0-100, \"verdict\": \"TRADE_VALID\"|\"WAIT\"|\"AVOID\"|\"NO_CLEAR_EDGE\", "
         "\"reasoning\": \"120-180 words, plain trader English\", \"risk_flags\": [\"...\"], "
         "\"invalidation\": [\"3-4 concrete conditions\"]}. "
-        "Bundle field meanings -- trend_template: this ticker's Minervini 8-point Stage-2 checklist result and RS rank (0-99) from tonight's screen, null if not in the NIFTY 500 screen universe. "
-        "market_regime: overall NIFTY regime (TRENDING_UP/CHOPPY/TRENDING_DOWN), null if unavailable. "
-        "signal: the mean-reversion z-score signal for this ticker. "
-        "delivery_pct: NSE delivery percentage, null if not available -- never invent a number for it. "
-        "matched_headlines: recent news matched to this ticker; treat unmatched/generic market headlines as weak, not company-specific, evidence. "
-        "Weigh trend_template + market_regime + signal as the primary evidence; headlines and diary are supporting context only. "
-        "Do not invent facts; cite only the provided inputs, and say plainly when a field is null/empty rather than working around it. "
+        "Bundle field meanings -- trend_template: this stock's Minervini 8-point Stage-2 checklist and RS rank (0-99) from tonight's NIFTY 500 screen (absent if outside that universe). "
+        "market: NIFTY trend, distance from its high, distribution-day count, follow-through status and the suggested risk posture -- Minervini's 'M': most breakouts fail in a correction. "
+        "setup: where the stock sits in its base -- status (BASING = buy only on a move through the pivot; IN BUY RANGE = within 5% past the pivot; EXTENDED = too far past it, wait for a new base; NO BASE YET), pivot price, base depth, contraction depths and whether it looks like a VCP, plus % above the 50-day average. "
+        "next_results_date: next quarterly results date if published -- holding through results is a gap risk. "
+        "mean_reversion_signal: only present when that separate model is active. "
+        "matched_headlines: news that names this company; often empty, which is normal. "
+        "Weigh setup + trend_template + market as the primary evidence; headlines are supporting context only. "
+        "Do not invent facts; cite only the provided inputs. "
+        "Writing rules -- the reader is an experienced trader, not a programmer: never print field names, code words or enums "
+        "(write 'the market is in a correction', not TRENDING_DOWN); never write null, None, N/A or '0.0 confidence'; "
+        "round percentages to whole numbers; write prices with a rupee sign; "
+        "do not list missing data as a risk flag -- risk_flags are real trading risks only (extension, results inside the hold, weak market, wide stop, loose base). "
         "If score < 60, verdict must be AVOID or NO_CLEAR_EDGE -- never TRADE_VALID or WAIT. "
-        "Use NO_CLEAR_EDGE instead of forcing AVOID when the evidence is genuinely mixed or too thin to take a directional view either way (e.g. trend_template and signal disagree, or most fields are null) -- it is a valid abstention, not a synonym for AVOID. "
-        "invalidation: 3-4 short bullets naming the SPECIFIC numeric levels already present in trend_template/signal/market_regime that would flip this call if breached -- e.g. \"Close below the 50-day SMA (use the exact SMA50 value from trend_template)\", \"RS rank falls below 70\", \"200-day SMA turns down\", \"Regime shifts to TRENDING_DOWN\". Use the real numbers from the bundle, never placeholders. "
+        "Use NO_CLEAR_EDGE instead of forcing AVOID when the evidence is genuinely mixed or too thin to take a directional view either way (e.g. a strong trend template in a weak market, or most evidence missing) -- it is a valid abstention, not a synonym for AVOID. "
+        "invalidation: 3-4 short bullets naming the SPECIFIC numeric levels already present in setup/trend_template/market that would flip this call if breached -- e.g. \"Close below the 50-day SMA (use the exact SMA50 value from trend_template)\", \"RS rank falls below 70\", \"Closes back below the ₹X pivot after breaking out\", \"Market adds more distribution days\". Use the real numbers from the bundle, never placeholders. "
         f"Bundle: {json.dumps(prompt_bundle)}"
     )
     raw_text = _call_llm(prompt)

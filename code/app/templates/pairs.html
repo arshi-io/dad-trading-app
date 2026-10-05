@@ -1,151 +1,122 @@
 {% extends "base.html" %}
 {% block title %}Spread Trades — Papa Terminal{% endblock %}
 {% block extra_head %}
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-  .pair-card { margin-bottom: 24px; padding-bottom: 20px; }
-  .pair-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
-  .pair-name { font-family: var(--font-mono); font-size: 22px; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
-  .pair-grid { display: grid; grid-template-columns: 0.9fr 1.3fr; gap: 24px; margin-top: 8px; }
-  .gauge-box { text-align: center; }
-  .zscore-big { font-family: var(--font-mono); font-size: 15px; color: var(--muted); margin-top: -8px; }
-
-  .trade-line {
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
-    padding: 14px 16px; margin: 14px 0;
-  }
-  .trade-line .lbl { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
-  .trade-line .val { font-family: var(--font-mono); font-size: 17px; }
-
-  .footer-note { color: var(--muted); font-size: 15px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-  .footer-note .mono { color: var(--muted); }
-  .why-text { color: var(--muted); font-size: 15px; }
-  .why-text strong { color: var(--text); font-weight: 600; }
-  .engine-note { color: var(--muted); font-size: 15px; margin: -6px 0 24px 0; max-width: 720px; }
-
-  @media (max-width: 780px) {
-    .pair-grid { grid-template-columns: 1fr; }
-  }
-
-  @media (max-width: 600px) {
-    .zscore-big, .trade-line .lbl, .footer-note, .why-text, .engine-note {
-      font-size: 16px;
-    }
-    .pair-name { font-size: 19px; }
-    .pair-card { padding: 20px; }
-  }
+  .pair-card { margin-bottom: 12px; }
+  .pair-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .pair-name { font-size: 16px; font-weight: 600; }
+  .why-text { color: var(--muted); font-size: 13px; margin: 3px 0 10px; }
+  .why-text strong { color: var(--text); font-weight: 500; }
+  .meter { position: relative; height: 4px; margin: 14px 0 4px; border-radius: 2px;
+           background: linear-gradient(to right, var(--green-dim) 0 21.4%, var(--surface-2) 21.4% 78.6%, var(--green-dim) 78.6% 100%); }
+  .meter .mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--border-strong); }
+  .meter .needle { position: absolute; top: -4px; width: 2px; height: 12px; margin-left: -1px; }
+  .meter-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted-2); }
+  .meter-read { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .meter-read b { color: var(--text); font-weight: 500; }
+  .legs { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 12px 0; }
+  .leg { padding: 8px 10px 8px 0; }
+  .leg + .leg { padding-left: 10px; border-left: 1px solid var(--border); }
+  .leg .side { font-size: 11px; font-weight: 600; letter-spacing: .05em; }
+  .leg .what { font-size: 14px; font-weight: 500; }
+  .leg .sub { color: var(--muted); font-size: 12px; }
+  .buy { color: var(--blue); } .sell { color: #ff7043; }
+  .note { margin: 6px 0; font-size: 13px; color: var(--amber); }
+  .spread-chart { height: 200px; margin-top: 4px; }
+  .chart-legend { font-size: 12px; color: var(--muted-2); margin-top: 4px; }
+  .footer-note { color: var(--muted-2); font-size: 12px; margin-top: 10px; }
+  .engine-note { color: var(--muted); font-size: 14px; margin: -8px 0 16px 0; max-width: 680px; }
 </style>
 {% endblock %}
 {% block content %}
-<h1>Spread Trades</h1>
-<p class="engine-note">Cointegrated pairs are found automatically by the engine and re-tested monthly. They can't be hand-picked, because a pairs trade only works between two statistically linked stocks.
+<h1>Pairs</h1>
+<p class="engine-note">Pairs of same-sector stocks that historically move together. When the gap between them stretches past 2σ, the trade bets on it snapping back. Held through stock futures — a cash short can't be carried overnight.
 {% if rescan_stats and rescan_stats.tested %}
-Last rescan tested <span class="mono">{{ rescan_stats.tested }}</span> same-sector candidate pairs from the NIFTY 100 and found <span class="mono">{{ rescan_stats.passed }}</span> statistically cointegrated (p&lt;0.05).
+Last monthly rescan ({{ rescan_stats.rescanned_at|nicedate }}) tested {{ rescan_stats.tested }} NIFTY 100 pairs; {{ rescan_stats.passed }} passed.
 {% endif %}
 </p>
 
 {% if items %}
 {% for item in items %}
+{% set live = item.status in ("BUY", "SELL") %}
+{% set a, b = item.ticker_a|sym, item.ticker_b|sym %}
+{% set a_side = "SELL" if item.status == "SELL" else "BUY" %}
+{% set b_side = "BUY" if a_side == "SELL" else "SELL" %}
 <div class="card pair-card">
   <div class="pair-head">
-    <span class="pair-name">{{ item.pair }}</span>
-    {% if item.sector %}<span class="chip neutral">{{ item.sector }}</span>{% endif %}
-    {% if item.status in ("BUY", "SELL") %}
-    <span class="chip good">ENTRY ZONE</span>
-    {% elif item.status == "HOLD" %}
-    <span class="chip wait">EXIT</span>
-    {% else %}
-    <span class="chip neutral">WAIT</span>
-    {% endif %}
+    <span class="pair-name">{{ a }} / {{ b }}</span>
+    {% if live %}<span class="chip good">Entry zone</span>{% elif item.status == "HOLD" %}<span class="chip wait">Exit zone</span>{% else %}<span class="chip">Wait</span>{% endif %}
   </div>
-  {% if item.status in ("BUY", "SELL") %}
-  <div class="why-text" style="margin-top:6px;">
-    <strong>SPREAD STRETCHED</strong> — mean-reversion entry:
-    {{ "long " + item.ticker_a + " / short " + item.ticker_b if item.status == "BUY" else "short " + item.ticker_a + " / long " + item.ticker_b }}
+  <div class="why-text">
+    {% if item.sector %}{{ item.sector }} · {% endif %}
+    {% if live %}<strong>Stretched {{ "%.1f"|format(item.zscore|abs) }}σ</strong> — {{ a }} is {{ "cheap" if item.status == "BUY" else "rich" }} against {{ b }}. Usually halves the gap in ~{{ "%.0f"|format(item.half_life_days) }} sessions.
+    {% else %}Inside its normal range — nothing to do until it stretches past 2σ.{% endif %}
   </div>
+
+  {% set pos = ((item.zscore if item.zscore|abs < 3.5 else (3.5 if item.zscore > 0 else -3.5)) + 3.5) / 7 * 100 %}
+  <div class="meter" role="img" aria-label="Stretch {{ '%.2f'|format(item.zscore) }} sigma">
+    <span class="mid"></span>
+    <span class="needle" style="left: {{ pos }}%; background: {{ 'var(--green)' if live else 'var(--muted)' }};"></span>
+  </div>
+  <div class="meter-scale"><span>−3.5σ exit</span><span>−2σ</span><span>0</span><span>+2σ</span><span>+3.5σ exit</span></div>
+  <div class="meter-read"><span class="term" title="How stretched the rubber band is: ±2 = fully stretched, ±3.5 = the relationship may have broken (hard exit)">Stretch</span> <b>{{ "%+.2f"|format(item.zscore) }}σ</b></div>
+
+  {% if item.fno %}
+  <div class="legs">
+    <div class="leg">
+      <div class="side {{ 'buy' if a_side == 'BUY' else 'sell' }}">{{ a_side if live else "LEG A" }}</div>
+      <div class="what">{{ item.lots_a }} lot {{ a }} fut</div>
+      <div class="sub">{{ item.qty_a }} shares · ≈ ₹{{ "{:,.0f}".format(item.notional_a) }}</div>
+    </div>
+    <div class="leg">
+      <div class="side {{ 'buy' if b_side == 'BUY' else 'sell' }}">{{ b_side if live else "LEG B" }}</div>
+      <div class="what">{{ item.lots_b }} lot{{ "s" if item.lots_b != 1 }} {{ b }} fut</div>
+      <div class="sub">{{ item.qty_b }} shares · ≈ ₹{{ "{:,.0f}".format(item.notional_b) }}</div>
+    </div>
+  </div>
+  {% if item.hedge_mismatch_pct|abs > 15 %}<div class="note">Whole lots can't match the hedge ratio closely here ({{ "%+.0f"|format(item.hedge_mismatch_pct) }}% off on the {{ b }} leg), so the pair isn't fully market-neutral.</div>{% endif %}
+  {% else %}
+  <div class="note">{{ a if not item.lot_a else b }} has no stock futures, so this pair can't be held overnight as a hedged trade. Shown for reference only.</div>
   {% endif %}
 
-  <div class="pair-grid">
-    <div>
-      <div class="gauge-box">
-        <div id="gauge-{{ loop.index }}" style="width: 100%; max-width: 340px; height: 210px; margin: 0 auto; overflow: hidden;"></div>
-        <div class="zscore-big"><span class="term" title="The spread is unusually far from its normal relationship between these two stocks; ±2 = fully stretched, time to consider a trade.">z-score</span> {{ "%.2f"|format(item.zscore) }} &middot; 60d window</div>
-      </div>
-      <div class="trade-line">
-        <div class="lbl"><span class="term" title="Buy/sell these share quantities to hold the pair market-neutral, based on the current hedge ratio.">Trade size</span></div>
-        <div class="val">Buy {{ item.qty_a }} {{ item.ticker_a }} &nbsp;:&nbsp; Sell {{ item.qty_b }} {{ item.ticker_b }}</div>
-      </div>
-    </div>
-    <div>
-      <div id="spread-{{ loop.index }}" style="height: 300px;"></div>
-    </div>
-  </div>
+  <div class="spread-chart" data-i="{{ loop.index0 }}"></div>
+  <div class="chart-legend">Gap between the two (₹ per share of {{ a }}) · amber = ±2σ entry bands</div>
 
   <div class="footer-note">
-    Last cointegration re-test: <span class="mono">{{ last_scan or "unknown" }}</span> &middot;
-    <span class="term mono" title="p-value from the Engle-Granger cointegration test; lower means the pair's spread is more reliably mean-reverting.">p={{ "%.4f"|format(item.pvalue) }}</span> &middot;
-    half-life <span class="mono">{{ "%.1f"|format(item.half_life_days) }}d</span> &middot;
-    hard exit beyond &plusmn;3.5&sigma;
+    Relationship last re-tested {{ last_scan|nicedate }} ·
+    <span class="term" title="Chance the link between these two is a fluke; lower is better">fluke odds {{ "%.2f"|format(item.pvalue * 100) }}%</span> ·
+    hard exit beyond ±3.5σ
   </div>
 </div>
-<script>
-(function() {
-  const z = {{ item.zscore }};
-  const entryZ = {{ item.entry_z }};
-  const zoneColor = Math.abs(z) >= entryZ ? "#22C55E" : "#3B82F6";
-
-  Plotly.newPlot("gauge-{{ loop.index }}", [{
-    type: "indicator",
-    mode: "gauge+number",
-    value: z,
-    number: { valueformat: ".2f", font: { size: 40, color: "#E8EAED", family: "ui-monospace, Consolas, monospace" } },
-    gauge: {
-      shape: "angular",
-      axis: { range: [-3.5, 3.5], tickcolor: "#6B7280", tickfont: { color: "#9CA3AF", size: 11 } },
-      bar: { color: "rgba(0,0,0,0)", thickness: 0 },
-      bgcolor: "#1D2330",
-      borderwidth: 0,
-      steps: [
-        { range: [-3.5, -entryZ], color: "#14251A" },
-        { range: [-entryZ, entryZ], color: "#262E40" },
-        { range: [entryZ, 3.5], color: "#14251A" },
-      ],
-      threshold: { line: { color: zoneColor, width: 5 }, thickness: 0.85, value: z },
-    },
-  }], {
-    width: document.getElementById("gauge-{{ loop.index }}").clientWidth,
-    height: 210,
-    paper_bgcolor: "transparent",
-    font: { color: "#E8EAED", size: 14 },
-    margin: { t: 10, b: 0, l: 30, r: 30 },
-  }, { displayModeBar: false, responsive: true });
-
-  const spread = {{ item.spread_series | tojson }};
-  const upper = {{ item.upper_band_series | tojson }};
-  const lower = {{ item.lower_band_series | tojson }};
-  Plotly.newPlot("spread-{{ loop.index }}", [
-    {
-      x: lower.map(p => new Date(p[0])), y: lower.map(p => p[1]), mode: "lines", name: "-" + entryZ + "σ",
-      line: { color: "#333A48", width: 1 }, showlegend: false,
-    },
-    {
-      x: upper.map(p => new Date(p[0])), y: upper.map(p => p[1]), mode: "lines", name: "±" + entryZ + "σ band",
-      line: { color: "#333A48", width: 1 }, fill: "tonexty", fillcolor: "rgba(59,130,246,0.06)",
-    },
-    { x: spread.map(p => new Date(p[0])), y: spread.map(p => p[1]), mode: "lines", name: "spread", line: { color: "#3B82F6", width: 2 } },
-  ], {
-    paper_bgcolor: "transparent",
-    plot_bgcolor: "transparent",
-    font: { color: "#E8EAED", size: 12 },
-    margin: { t: 16, b: 30, l: 44, r: 16 },
-    legend: { orientation: "h", font: { size: 11, color: "#9CA3AF" } },
-    xaxis: { gridcolor: "#262B36", zeroline: false },
-    yaxis: { gridcolor: "#262B36", zeroline: false },
-  }, { displayModeBar: false, responsive: true });
-})();
-</script>
 {% endfor %}
+<script nonce="{{ csp_nonce }}">
+  const PAIRS = {{ items_chart | tojson }};
+</script>
+<script nonce="{{ csp_nonce }}" src="/static/js/lightweight-charts-4.2.3.js" defer></script>
+<script nonce="{{ csp_nonce }}">
+  window.addEventListener('load', function () {
+    const pts = arr => arr.map(p => ({ time: Math.floor(p[0] / 1000), value: p[1] }));
+    const io = new IntersectionObserver(entries => entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      io.unobserve(e.target);
+      const d = PAIRS[e.target.dataset.i];
+      const chart = LightweightCharts.createChart(e.target, {
+        width: e.target.clientWidth, height: e.target.clientHeight,
+        layout: { background: { color: 'transparent' }, textColor: '#999999' },
+        grid: { vertLines: { visible: false }, horzLines: { color: '#232323' } },
+        timeScale: { borderVisible: false }, rightPriceScale: { borderVisible: false },
+        handleScroll: false, handleScale: false,
+      });
+      const band = { color: '#d4a03d', lineWidth: 1, priceLineVisible: false, lastValueVisible: false };
+      chart.addLineSeries(band).setData(pts(d.upper));
+      chart.addLineSeries(band).setData(pts(d.lower));
+      chart.addLineSeries({ color: '#e4e4e4', lineWidth: 1.5, priceLineVisible: false }).setData(pts(d.spread));
+      chart.timeScale().fitContent();
+    }), { rootMargin: '200px' });
+    document.querySelectorAll('.spread-chart').forEach(el => io.observe(el));
+  });
+</script>
 {% else %}
-<div class="empty-state">No statistically valid pairs right now — none of the tracked candidates test as cointegrated (p&lt;0.05) this month. Nothing to do is also a decision.</div>
+<div class="empty-state">No statistically valid pairs right now — nothing to do is also a decision.</div>
 {% endif %}
 {% endblock %}
