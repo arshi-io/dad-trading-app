@@ -50,9 +50,9 @@
   <div class="market-note">{{ posture.text }}</div>
   <div class="stats">
     <div class="stat">
-      <div class="label" style="margin: 0;">NIFTY 50</div>
-      <div class="v">{{ "{:,.2f}".format(nifty.close) if nifty.close is number else "—" }}</div>
-      {% if nifty.chg_pct is defined and nifty.chg_pct is not none %}<div class="s {{ 'up' if nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nifty.chg_pct) }}%</div>{% endif %}
+      <div class="label" style="margin: 0;">NIFTY 50 <span class="live-badge" data-live-status hidden></span></div>
+      <div class="v" data-live-px="^NSEI">{{ "{:,.2f}".format(nifty.close) if nifty.close is number else "—" }}</div>
+      {% if nifty.chg_pct is defined and nifty.chg_pct is not none %}<div class="s {{ 'up' if nifty.chg_pct > 0 else 'down' }}" data-live-chg="^NSEI">{{ "%+.2f"|format(nifty.chg_pct) }}%</div>{% endif %}
     </div>
     <div class="stat">
       <div class="label" style="margin: 0;">From high</div>
@@ -86,7 +86,9 @@
           {% if s.results_date %}<span class="chip wait">Results {{ s.results_date|nicedate }}</span>{% endif %}
         </div>
         <div class="sub">{{ s.reason }}{% if s.review %} · review {{ s.review.score }}/100{% endif %}</div>
+        {% if s.kind == "stock" and s.pivot %}<span class="live-pivot" data-live-pivot="{{ s.symbol }}" data-pivot="{{ s.pivot }}"></span>{% endif %}
       </div>
+      {% if s.kind == "stock" %}<div class="right" style="text-align: right;"><span data-live-px="{{ s.symbol }}" data-prefix="₹"></span><div data-live-chg="{{ s.symbol }}" style="font-size: 13px;"></div></div>{% endif %}
       <span class="go">›</span>
     </a>
     {% endfor %}
@@ -116,9 +118,7 @@
         <div class="sym">{{ row.symbol|sym }}</div>
         <div class="sub">{{ stance }}{% if row.conditions is not none %} · {{ row.conditions }}/8{% endif %}{% if row.setup_status %} · {{ row.setup_status|lower }}{% endif %}{% if row.arrow != "—" %} · <span class="{{ 'up' if row.arrow_class == 'good' else 'down' }}">{{ "upgraded" if row.arrow_class == "good" else "downgraded" }}</span>{% endif %}</div>
       </a>
-      {% if row.close %}
-      <div class="right">₹{{ "{:,.2f}".format(row.close) }}<div class="{{ 'up' if row.chg_pct > 0 else 'down' if row.chg_pct < 0 else 'muted' }}" style="font-size: 13px;">{{ "%+.2f"|format(row.chg_pct) }}%</div></div>
-      {% endif %}
+      <div class="right"><span data-live-px="{{ row.symbol }}" data-prefix="₹">{% if row.close %}₹{{ "{:,.2f}".format(row.close) }}{% endif %}</span><div data-live-chg="{{ row.symbol }}" class="{{ 'up' if (row.chg_pct or 0) > 0 else 'down' if (row.chg_pct or 0) < 0 else 'muted' }}" style="font-size: 13px;">{% if row.chg_pct is number %}{{ "%+.2f"|format(row.chg_pct) }}%{% endif %}</div></div>
       <form method="post" action="/api/watchlist/remove" style="margin: 0;">
         <input type="hidden" name="symbol" value="{{ row.symbol }}">
         <input type="hidden" name="next" value="/">

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import hmac
 import json
 import logging
@@ -922,9 +923,11 @@ async def home(request: Request) -> HTMLResponse:
     diffs, _dropped = _diff_screen_items(screen_items, previous_snapshot)
     results = snapshot.get("results") or {}
     reviews = {p["symbol"]: p.get("review") for p in snapshot.get("predictions", []) if p.get("review")}
+    pivots = {i["symbol"]: (i.get("setup") or {}).get("pivot") for i in screen_items}
     setups = []
     for item in snapshot.get("action_queue", []):
         row = dict(item)
+        row["pivot"] = pivots.get(item["symbol"])
         row["results_date"] = results.get(item["symbol"])
         row["review"] = reviews.get(item["symbol"])
         row["badge"] = (diffs.get(item["symbol"]) or {}).get("badge")
@@ -965,6 +968,8 @@ async def stock_room(asset: str, request: Request) -> HTMLResponse:
     """Everything that's cheap renders now; the Setup Review (an LLM call when not pre-computed
     overnight) and the company headlines load into the page afterwards."""
     asset = _normalize_ticker(asset)
+    if asset.endswith(".NS") and asset not in _RECENT_VIEWED:
+        _RECENT_VIEWED.append(asset)
     snapshot = _load_latest_snapshot()
     df = _drop_incomplete_ohlcv_rows(await asyncio.to_thread(kite_fetch, asset))
 
@@ -1157,10 +1162,14 @@ async def diary() -> RedirectResponse:
     return RedirectResponse(url="/predictions#book", status_code=307)
 
 
+NIFTY_LIVE = "^NSEI"
+_RECENT_VIEWED: "collections.deque[str]" = collections.deque(maxlen=8)  # Stock Room pages opened today
+
+
 def _live_symbols() -> List[str]:
     """What's worth a live price: watchlist, tonight's buy-ready setups, open positions, waiting orders."""
     snapshot = _load_latest_snapshot()
-    syms = list(_get_watchlist_symbols())
+    syms = [NIFTY_LIVE] + list(_RECENT_VIEWED) + list(_get_watchlist_symbols())
     syms += [a["symbol"] for a in snapshot.get("action_queue", []) if a.get("kind") == "stock"]
     syms += [p["symbol"] for p in snapshot.get("predictions", []) if p.get("kind") == "stock" and p.get("tradeable")]
     syms += [t["ticker"] for t in get_trades(limit=100, status="open") + get_trades(limit=100, status="pending") if t.get("kind") != "pair"]

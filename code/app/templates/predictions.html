@@ -103,11 +103,11 @@
   <div class="pos">
     <div class="l">
       <div class="t"><b>{{ t.ticker|sym }}</b> · {{ t.side|lower }} {{ t.qty }} @ {{ rs(t.entry_price) }}</div>
-      <div class="s">LTP {{ rs(t.last_price if t.last_price is not none else t.entry_price) }}{% if t.last_price_date %} ({{ t.last_price_date|nicedate }}){% endif %}{% if t.stop is not none %} · stop {{ rs(t.stop) }} · {% if t.exit_rule == "trail21" %}exits on a close below the 21-day average{% else %}target {{ rs(t.target) }}{% endif %}{% endif %}</div>
+      <div class="s">LTP <span data-live-px="{{ t.ticker }}" data-prefix="₹">{{ rs(t.last_price if t.last_price is not none else t.entry_price) }}</span>{% if t.last_price_date %} ({{ t.last_price_date|nicedate }}){% endif %}{% if t.stop is not none %} · stop {{ rs(t.stop) }} · {% if t.exit_rule == "trail21" %}exits on a close below the 21-day average{% else %}target {{ rs(t.target) }}{% endif %}{% endif %}</div>
       <details class="notes"><summary>{{ "Note" if t.notes else "Add note" }}</summary><textarea data-note="{{ t.id }}" placeholder="Why this trade?">{{ t.notes or "" }}</textarea></details>
     </div>
     <div class="r">
-      <div class="pnl {{ 'up' if t.mtm_pnl > 0 else 'down' if t.mtm_pnl < 0 }}">{{ rs0(t.mtm_pnl) }}</div>
+      <div class="pnl {{ 'up' if t.mtm_pnl > 0 else 'down' if t.mtm_pnl < 0 }}" data-live-pnl="{{ t.ticker }}" data-entry="{{ t.entry_price }}" data-qty="{{ t.qty }}" data-side="{{ t.side }}">{{ rs0(t.mtm_pnl) }}</div>
       <button class="btn-sm" data-action="close" data-id="{{ t.id }}" data-label="Exit">Exit</button>
     </div>
   </div>

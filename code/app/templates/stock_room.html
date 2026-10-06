@@ -135,9 +135,10 @@
 {% if company or (screen_item and screen_item.sector) %}<div class="company">{{ company or "" }}{% if screen_item and screen_item.sector %} · {{ screen_item.sector }}{% endif %}</div>{% endif %}
 
 <div class="px-row">
-  <span class="px">₹{{ "{:,.2f}".format(metrics.close) }}</span>
-  <span class="chg {{ 'up' if metrics.chg_pct > 0 else 'down' if metrics.chg_pct < 0 }}">{{ "%+.2f"|format(metrics.chg_pct) }}%</span>
+  <span class="px" data-live-px="{{ asset }}" data-prefix="₹">₹{{ "{:,.2f}".format(metrics.close) }}</span>
+  <span class="chg {{ 'up' if metrics.chg_pct > 0 else 'down' if metrics.chg_pct < 0 }}" data-live-chg="{{ asset }}">{{ "%+.2f"|format(metrics.chg_pct) }}%</span>
   <span class="ohlc">O {{ "%.2f"|format(latest.open) }} · H {{ "%.2f"|format(latest.high) }} · L {{ "%.2f"|format(latest.low) }} · {{ data_asof|nicedate if data_asof else "" }}</span>
+  <span class="live-badge" data-live-status hidden></span>
 </div>
 <div class="facts">
   <div class="fact"><div class="k">From 52-week high</div><div class="v">{{ metrics.pct_from_high }}%</div></div>

@@ -51,6 +51,8 @@
     p { margin: 0 0 10px 0; }
     .mono { font-variant-numeric: tabular-nums; }
     .up { color: var(--green); } .down { color: var(--red); } .muted { color: var(--muted); }
+    .live-badge { font-size: 12px; color: var(--green); margin-left: 8px; } .live-badge::before { content: "● "; }
+    .live-pivot { display: block; font-size: 13px; margin-top: 2px; }
 
     /* ---- top bar ---- */
     nav {
@@ -191,7 +193,7 @@
   <nav id="site-nav">
     <div class="nav-bar">
       <span class="brand">Papa Terminal</span>
-      {% if nav_nifty and nav_nifty.close %}<span class="quote">NIFTY 50<b>{{ "{:,.2f}".format(nav_nifty.close) }}</b>{% if nav_nifty.chg_pct is defined and nav_nifty.chg_pct is not none %}<span class="{{ 'up' if nav_nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nav_nifty.chg_pct) }}%</span>{% endif %}</span>{% endif %}
+      {% if nav_nifty and nav_nifty.close %}<span class="quote">NIFTY 50<b data-live-px="^NSEI">{{ "{:,.2f}".format(nav_nifty.close) }}</b>{% if nav_nifty.chg_pct is defined and nav_nifty.chg_pct is not none %}<span data-live-chg="^NSEI" class="{{ 'up' if nav_nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nav_nifty.chg_pct) }}%</span>{% endif %}</span>{% endif %}
       <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-menu">
         <span aria-hidden="true">&#9776;</span>
       </button>
@@ -370,5 +372,6 @@
       });
     });
   </script>
+  <script src="/static/js/live.js" nonce="{{ csp_nonce }}" defer></script>
 </body>
 </html>
