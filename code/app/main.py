@@ -594,12 +594,12 @@ async def lifespan(_app: FastAPI):
         replace_existing=True,
     )
     scheduler.add_job(
-        lambda: asyncio.create_task(asyncio.to_thread(broker_session.auto_connect)),
+        broker_session.auto_connect,  # plain function: APScheduler runs it in its thread pool
         CronTrigger(day_of_week="mon-fri", hour=8, minute=50, timezone=IST),
         id="broker_auto_connect", name="Motilal auto-connect (08:50 IST, if configured)", replace_existing=True,
     )
     scheduler.add_job(
-        lambda: asyncio.create_task(asyncio.to_thread(choice_broker.auto_connect)),
+        choice_broker.auto_connect,
         CronTrigger(day_of_week="mon-fri", hour=8, minute=55, timezone=IST),
         id="choice_auto_connect", name="Choice auto-connect (08:55 IST, if configured)", replace_existing=True,
     )

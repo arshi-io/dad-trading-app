@@ -218,6 +218,7 @@ def compute_breadth_pct(tickers: List[str]) -> float:
 # window with margin, even for the earliest as-of date a caller might slice to.
 UNIVERSE_HISTORY_YEARS = 3
 UNIVERSE_CACHE_TTL = timedelta(hours=24)
+UNIVERSE_BATCH = 100
 
 
 def _universe_cache_path(ticker: str) -> Path:
@@ -277,17 +278,19 @@ def fetch_universe_closes(
     else:
         to_fetch = list(tickers)
 
-    if to_fetch:
+    # 100 tickers per download: one 500-ticker call peaked high enough to get a 512 MB container killed.
+    for i in range(0, len(to_fetch), UNIVERSE_BATCH):
+        batch = to_fetch[i:i + UNIVERSE_BATCH]
         try:
             raw = yf.download(
-                tickers=to_fetch, start=start, end=end,
+                tickers=batch, start=start, end=end,
                 auto_adjust=True, progress=False, threads=True, group_by="ticker",
             )
         except Exception as exc:
             logger.warning("universe fetch failed: %s", exc)
             raw = pd.DataFrame()
 
-        for ticker in to_fetch:
+        for ticker in batch:
             try:
                 if isinstance(raw.columns, pd.MultiIndex):
                     sub = raw[ticker].copy()
