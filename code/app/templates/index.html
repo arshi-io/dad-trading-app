@@ -51,7 +51,7 @@
   <div class="stats">
     <div class="stat">
       <div class="label" style="margin: 0;">NIFTY 50</div>
-      <div class="v">{{ "{:,.2f}".format(nifty.close) if nifty.close is not none else "—" }}</div>
+      <div class="v">{{ "{:,.2f}".format(nifty.close) if nifty.close is number else "—" }}</div>
       {% if nifty.chg_pct is defined and nifty.chg_pct is not none %}<div class="s {{ 'up' if nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nifty.chg_pct) }}%</div>{% endif %}
     </div>
     <div class="stat">
