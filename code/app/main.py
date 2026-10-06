@@ -409,8 +409,14 @@ def _run_nightly_pipeline_sync() -> None:
         logger.exception("nightly pipeline run failed")
 
 
+# One heavy job at a time (pipeline ~380 MB, pairs rescan ~270 MB): a scheduled run landing during
+# the startup catch-up waits instead of doubling memory.
+_HEAVY_JOB_LOCK = asyncio.Lock()
+
+
 async def _run_nightly_pipeline_job() -> None:
-    await asyncio.to_thread(_run_nightly_pipeline_sync)
+    async with _HEAVY_JOB_LOCK:
+        await asyncio.to_thread(_run_nightly_pipeline_sync)
 
 
 def _run_pairs_monthly_rescan_sync() -> None:
@@ -430,7 +436,8 @@ def _run_pairs_monthly_rescan_sync() -> None:
 
 
 async def _run_pairs_monthly_rescan_job() -> None:
-    await asyncio.to_thread(_run_pairs_monthly_rescan_sync)
+    async with _HEAVY_JOB_LOCK:
+        await asyncio.to_thread(_run_pairs_monthly_rescan_sync)
 
 
 # A sleeping laptop wakes up after the 18:30 / 08:30 slots; by default APScheduler then skips the run
@@ -604,9 +611,22 @@ async def lifespan(_app: FastAPI):
     # 18:30/08:30 fire -- if the snapshot on disk is already missing or
     # stale, kick one immediate background run so the site isn't stuck on
     # "no data" for up to a full cycle. Fire-and-forget; never blocks startup.
-    if _snapshot_is_stale(_load_latest_snapshot()):
-        logger.info("snapshot missing/stale at startup -- kicking an immediate background pipeline run")
-        asyncio.create_task(_run_nightly_pipeline_job())
+    # Pairs rescan (if its cache is missing) and pipeline run one after the other: together they
+    # peak ~650 MB and got OOM-killed on a 512 MB Railway container, restarting forever.
+    from code.pipeline.nightly_pipeline import PAIRS_CACHE_PATH
+    need_pairs = not PAIRS_CACHE_PATH.exists()
+    need_snapshot = _snapshot_is_stale(_load_latest_snapshot())
+
+    async def _startup_catch_up() -> None:
+        if need_pairs:
+            logger.info("pairs cointegration cache missing at startup -- running the monthly rescan first")
+            await _run_pairs_monthly_rescan_job()
+        if need_snapshot:
+            logger.info("snapshot missing/stale at startup -- running the pipeline now")
+            await _run_nightly_pipeline_job()
+
+    if need_pairs or need_snapshot:
+        asyncio.create_task(_startup_catch_up())
 
     # The RSS pull is the single slowest thing on a Stock Room view (measured
     # 4.3-29.5s cold) and it's identical for every ticker, so warm it once in
@@ -622,11 +642,6 @@ async def lifespan(_app: FastAPI):
     asyncio.create_task(asyncio.to_thread(broker_session.auto_connect))
     asyncio.create_task(asyncio.to_thread(choice_broker.auto_connect))
     asyncio.create_task(LIVE_FEED.run())
-
-    from code.pipeline.nightly_pipeline import PAIRS_CACHE_PATH
-    if not PAIRS_CACHE_PATH.exists():
-        logger.info("pairs cointegration cache missing at startup -- kicking an immediate background monthly rescan")
-        asyncio.create_task(_run_pairs_monthly_rescan_job())
 
     yield
 
