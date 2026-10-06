@@ -537,6 +537,7 @@ def build_pairs_section() -> Dict[str, Any]:
 
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path = path.resolve()  # write through a symlink (Railway volume) instead of replacing the link
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(path.parent), delete=False) as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
