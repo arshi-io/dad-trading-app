@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import subprocess
+import sys
 import hmac
 import json
 import logging
@@ -397,17 +399,28 @@ def _freshness_labels(snapshot: Dict[str, Any]) -> Dict[str, Optional[str]]:
     }
 
 
-def _run_nightly_pipeline_sync() -> None:
-    """The actual pipeline call -- synchronous and slow (yfinance/OpenAI/RSS
-    over the network), so every caller below runs it via asyncio.to_thread
-    rather than blocking the event loop."""
-    from code.pipeline.nightly_pipeline import run_pipeline
+def _run_job_in_subprocess(name: str, call: str) -> None:
+    """Heavy jobs run in a child process: Python never hands a finished run's ~500 MB back to the OS,
+    so in-process the web server sat at ~1 GB after 18:30 and the 08:30 run got the whole container
+    OOM-killed on Railway. A child returns everything on exit, and if it is killed only it dies."""
+    code = ("import logging; logging.basicConfig(level=logging.INFO, "
+            "format='%(asctime)s %(levelname)s %(name)s: %(message)s'); " + call)
+    logger.info("%s starting", name)
     try:
-        logger.info("nightly pipeline run starting")
-        run_pipeline()
-        logger.info("nightly pipeline run finished OK")
-    except Exception:
-        logger.exception("nightly pipeline run failed")
+        r = subprocess.run([sys.executable, "-c", code], stdout=subprocess.DEVNULL, timeout=3600)
+    except subprocess.TimeoutExpired:
+        logger.error("%s failed: still running after an hour, stopped", name)
+        return
+    if r.returncode == 0:
+        logger.info("%s finished OK", name)
+    else:
+        oom = " (killed -- most likely out of memory)" if r.returncode in (-9, 137) else ""
+        logger.error("%s failed: exit code %s%s", name, r.returncode, oom)
+
+
+def _run_nightly_pipeline_sync() -> None:
+    _run_job_in_subprocess("nightly pipeline run",
+                           "from code.pipeline.nightly_pipeline import run_pipeline; run_pipeline()")
 
 
 # One heavy job at a time (pipeline ~380 MB, pairs rescan ~270 MB): a scheduled run landing during
@@ -421,19 +434,8 @@ async def _run_nightly_pipeline_job() -> None:
 
 
 def _run_pairs_monthly_rescan_sync() -> None:
-    """The expensive sector-bucketed cointegration search -- monthly only,
-    same asyncio.to_thread pattern as the nightly job since it's also slow
-    network+CPU work that must not block the event loop."""
-    from code.pipeline.nightly_pipeline import run_pairs_monthly_rescan
-    try:
-        logger.info("pairs monthly rescan starting")
-        result = run_pairs_monthly_rescan()
-        logger.info(
-            "pairs monthly rescan finished OK: tested=%d passed=%d kept=%d elapsed=%.1fs",
-            result["candidates_tested"], result["candidates_passed"], len(result["pairs"]), result["elapsed_seconds"],
-        )
-    except Exception:
-        logger.exception("pairs monthly rescan failed")
+    _run_job_in_subprocess("pairs monthly rescan",
+                           "from code.pipeline.nightly_pipeline import run_pairs_monthly_rescan; run_pairs_monthly_rescan()")
 
 
 async def _run_pairs_monthly_rescan_job() -> None:
