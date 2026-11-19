@@ -56,6 +56,7 @@ TRADING_DAYS = 252
 
 # Percentile cutoffs for the three regimes.
 LOW_Q, HIGH_Q = 0.33, 0.66
+MIN_HISTORY = 20  # bars of vol history before a bar can be called LOW or HIGH
 
 # Position-size scalars per regime.
 SCALARS = {"LOW": 1.0, "MEDIUM": 0.75, "HIGH": 0.5}
@@ -201,36 +202,24 @@ def forecast_volatility(
 def classify_regime(garch_vol: pd.Series) -> pd.Series:
     """Bucket each bar's vol into LOW / MEDIUM / HIGH by percentile.
 
-    Uses the 33rd and 66th percentiles of the non-NaN series as the
-    regime boundaries.  Because boundaries are computed from the full
-    history, this is a *lookback-biased* classification when used on a
-    historical series — which is acceptable for regime *analysis*
-    (counting days per regime, aligning to macro events).  For live
-    trading you would recompute the quantiles on a trailing expanding
-    window; that refinement is deferred to the live engine.
+    The 33rd/66th percentile cut-offs are computed on an EXPANDING window, so each bar is
+    compared only with volatility seen up to that bar -- no lookahead. (Full-history cut-offs
+    let 2020's crash volatility decide what counted as "high" in 2018.) Bars with fewer than
+    MIN_HISTORY prior observations are MEDIUM; NaN stays NaN. The latest bar's label equals the
+    old full-history label, since its expanding window is the whole history.
 
     Returns
     -------
     pd.Series named ``regime`` with string values in
     {``LOW``, ``MEDIUM``, ``HIGH``}; NaN preserves NaN.
     """
-    v = garch_vol.dropna()
-    if len(v) < 3:
-        return pd.Series("MEDIUM", index=garch_vol.index, name="regime")
-
-    lo_cut = float(v.quantile(LOW_Q))
-    hi_cut = float(v.quantile(HIGH_Q))
-
-    def bucket(x: float) -> object:
-        if pd.isna(x):
-            return np.nan
-        if x < lo_cut:
-            return "LOW"
-        if x > hi_cut:
-            return "HIGH"
-        return "MEDIUM"
-
-    return garch_vol.apply(bucket).rename("regime")
+    v = garch_vol.astype(float)
+    known = v.dropna()
+    lo_cut = known.expanding(min_periods=MIN_HISTORY).quantile(LOW_Q).reindex(v.index)
+    hi_cut = known.expanding(min_periods=MIN_HISTORY).quantile(HIGH_Q).reindex(v.index)
+    out = pd.Series(np.where(v < lo_cut, "LOW", np.where(v > hi_cut, "HIGH", "MEDIUM")), index=v.index, dtype=object)
+    out[v.isna()] = np.nan
+    return out.rename("regime")
 
 
 # ---------------------------------------------------------------------------

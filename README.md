@@ -32,6 +32,21 @@ docker compose exec app python -m code.pipeline.nightly_pipeline   # first data 
 python -m pytest tests/ -q
 ```
 
+## Models
+
+| Model | Where | What it does | Used for |
+|---|---|---|---|
+| Minervini trend template + RS | `code/signals/minervini/` | 8-point Stage-2 screen of the NIFTY 500 | Screen, setups |
+| Market grade A/B/C | `code/regime/market_health.py` | breadth + NIFTY vs 50-day | Position size, posture |
+| GARCH(1,1) volatility regime | `code/signals/garch_volatility.py` | LOW/MED/HIGH volatility (expanding cut-offs) | Today headline |
+| HMM regime | `code/regime/hmm_regime.py` | 3-state HMM, filtered probabilities, monthly refit | Shown beside the grade only |
+| Engle-Granger pairs + OLS hedge | `code/signals/pairs_trading.py` | cointegration scan, 5–40 day half-life filter | Pairs signals |
+| Kalman hedge ratio | `code/signals/kalman_pairs.py` | daily-updating hedge and surprise z-score | Shown beside OLS only |
+| Calibrated ranges | `code/trading/ranges.py` | 68/90% next-day and 1-week ranges, adaptive conformal | Predictions |
+
+Research scripts (`python -m code.research.<name>`): `base_rates`, `hmm_base_rates`, `kalman_vs_ols`.
+Results and caveats: [docs/STRATEGIES.md](docs/STRATEGIES.md).
+
 ## Health
 
 `GET /healthz` (no login) → database, snapshot freshness, market session, mode, halt state.

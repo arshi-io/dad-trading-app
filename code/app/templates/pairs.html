@@ -60,6 +60,7 @@ Last monthly rescan ({{ rescan_stats.rescanned_at|nicedate }}) tested {{ rescan_
   </div>
   <div class="meter-scale"><span>−3.5σ exit</span><span>−2σ</span><span>0</span><span>+2σ</span><span>+3.5σ exit</span></div>
   <div class="meter-read"><span class="term" title="How stretched the rubber band is: ±2 = fully stretched, ±3.5 = the relationship may have broken (hard exit)">Stretch</span> <b>{{ "%+.2f"|format(item.zscore) }}σ</b></div>
+  <div class="meter-read muted" style="font-size: 13px;"><span class="term" title="Hedge ratio = shares of the second stock per share of the first. Fixed: one value fitted over 3 years (drives the signals above). Kalman: re-estimated every day, and its stretch is today's surprise versus yesterday's estimate. Shown for comparison only.">Hedge ratio</span> fixed {{ "%.2f"|format(item.hedge_ratio) }}{% if item.kalman_beta is not none %} · Kalman {{ "%.2f"|format(item.kalman_beta) }} · Kalman stretch {{ "%+.2f"|format(item.kalman_z) }}σ{% endif %}</div>
 
   {% if item.fno %}
   <div class="legs">

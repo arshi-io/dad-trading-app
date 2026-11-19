@@ -24,6 +24,7 @@ from code.pipeline.news_rss import fetch_news_items
 from code.regime.market_regime import classify_market_regime
 from code.signals.garch_volatility import forecast_volatility, classify_regime
 from code.signals.mean_rev import compute_zscore
+from code.signals.kalman_pairs import kalman_pair
 from code.signals.minervini.rs_rank import compute_rs_ranks
 from code.signals.minervini.trend_template import evaluate_trend_template
 from code.signals.pairs_trading import (
@@ -380,6 +381,13 @@ PAIRS_CHART_DAYS = 180
 PAIR_BASE_QTY = 100  # shares of ticker_a used to express hedge ratio as a share count
 PAIRS_TOP_N = 10  # keep only the N most-significant survivors -- enough to fill the tab, not overwhelm it
 PAIRS_CACHE_PATH = ROOT / "data" / "pairs_cointegration_cache.json"
+# Mean-reversion speed bounds (trading days). Faster than 5 is mostly noise and costs; slower than
+# 40 ties capital up longer than the edge is worth.
+PAIRS_HALF_LIFE_MIN, PAIRS_HALF_LIFE_MAX = 5.0, 40.0
+
+
+def _half_life_ok(half_life: float) -> bool:
+    return PAIRS_HALF_LIFE_MIN <= half_life <= PAIRS_HALF_LIFE_MAX
 
 
 def run_pairs_monthly_rescan() -> Dict[str, Any]:
@@ -420,7 +428,8 @@ def run_pairs_monthly_rescan() -> Dict[str, Any]:
     # A negative hedge ratio means both legs move the same way -- not a hedged pair.
     # Without futures on both legs the short can't be held overnight.
     lots = fetch_lot_sizes()
-    survivors = [s for s in survivors if s["hedge_ratio"] > 0 and (not lots or (s["ticker_a"] in lots and s["ticker_b"] in lots))]
+    survivors = [s for s in survivors if s["hedge_ratio"] > 0 and _half_life_ok(s["half_life"])
+                 and (not lots or (s["ticker_a"] in lots and s["ticker_b"] in lots))]
     survivors.sort(key=lambda d: d["pvalue"])
     kept = survivors[:PAIRS_TOP_N]
     elapsed = time.monotonic() - started
@@ -485,7 +494,7 @@ def build_pairs_section() -> Dict[str, Any]:
     items: List[Dict[str, Any]] = []
     for info in cache["pairs"]:
         ticker_a, ticker_b = info["ticker_a"], info["ticker_b"]
-        if info["hedge_ratio"] <= 0:
+        if info["hedge_ratio"] <= 0 or not _half_life_ok(info["half_life"]):
             continue
         df_a = clean_ohlcv(_patch_from_bhavcopy(ticker_a, fetch_ohlcv(ticker_a, start, end)))
         df_b = clean_ohlcv(_patch_from_bhavcopy(ticker_b, fetch_ohlcv(ticker_b, start, end)))
@@ -502,6 +511,7 @@ def build_pairs_section() -> Dict[str, Any]:
             continue
         latest_z = float(z_series.iloc[-1])
         status = _classify_pair_zscore(latest_z, PAIRS_ENTRY_Z, PAIRS_EXIT_Z)
+        kal = kalman_pair(close_a, close_b).dropna()  # shown beside OLS; signals still come from OLS
 
         chart_index = z_series.iloc[-PAIRS_CHART_DAYS:].index
         spread_chart = spread.reindex(chart_index)
@@ -523,6 +533,8 @@ def build_pairs_section() -> Dict[str, Any]:
             "pvalue": float(info["pvalue"]),
             "half_life_days": float(info["half_life"]),
             "zscore": latest_z,
+            "kalman_beta": round(float(kal["beta"].iloc[-1]), 3) if not kal.empty else None,
+            "kalman_z": round(float(kal["zscore"].iloc[-1]), 2) if not kal.empty else None,
             "status": status,
             "window": PAIRS_WINDOW,
             "entry_z": PAIRS_ENTRY_Z,
@@ -779,6 +791,22 @@ def _nse_nifty_row(d: date, session) -> Optional[Dict[str, float]]:
     return None
 
 
+HMM_HISTORY_START = "2007-09-17"  # first ^NSEI bar on Yahoo; the HMM needs ~3 years before its first label
+
+
+def _hmm_regime(nifty: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    """HMM label for today (code/regime/hmm_regime.py). Shown beside the existing regime, never
+    feeds the grade or posture, and a failure here must not cost the night's snapshot."""
+    from code.regime.hmm_regime import latest_regime
+    try:
+        long = fetch_ohlcv(NIFTY_INDEX_TICKER, HMM_HISTORY_START, (date.today() + timedelta(days=1)).isoformat())
+        close = nifty["close"].dropna().combine_first(long["close"]) if not long.empty else nifty["close"].dropna()
+        return latest_regime(close.astype(float))
+    except Exception:
+        logger.exception("HMM regime failed")
+        return None
+
+
 def _patch_nifty_from_nse(nifty: pd.DataFrame, reference: pd.DataFrame) -> pd.DataFrame:
     """Yahoo's NIFTY series sometimes lags its stock data by days. Fill the gap up to the latest
     stock bar from NSE's own index file. NSE counts index volume differently, so its volume is
@@ -826,6 +854,7 @@ def run_pipeline() -> Dict[str, Any]:
     breadth_pct = compute_breadth_pct(NIFTY50_CONSTITUENTS)
     breadth_series = pd.Series([breadth_pct], dtype=float) if pd.notna(breadth_pct) else pd.Series([], dtype=float)
     regime_info = classify_market_regime(garch_vol, nifty["close"], breadth_series)
+    hmm = _hmm_regime(nifty)
     regime = regime_info["regime"]
 
     screen_section = build_screen_section()
@@ -876,6 +905,7 @@ def run_pipeline() -> Dict[str, Any]:
             "breadth": brd,
             "breadth_200": b200,
             "grade": grade,
+            "hmm": hmm,
             "sector_leaders": leaders,
             "posture": posture,
         },

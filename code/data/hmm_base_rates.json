@@ -1,0 +1,137 @@
+{
+ "generated": "2026-10-14",
+ "period": "2012-01-19 to 2026-09-30",
+ "events_labelled": 20475,
+ "share_of_days": {
+  "Calm trend": 0.691,
+  "Choppy": 0.241,
+  "Stress": 0.068
+ },
+ "by_state": {
+  "Calm trend": {
+   "n": 13891,
+   "share": 0.678,
+   "hit_2r": 0.28,
+   "avg_r_trail": -0.022,
+   "se_r_trail": 0.019,
+   "avg_r_fixed": -0.078
+  },
+  "Choppy": {
+   "n": 5065,
+   "share": 0.247,
+   "hit_2r": 0.255,
+   "avg_r_trail": -0.067,
+   "se_r_trail": 0.029,
+   "avg_r_fixed": -0.113
+  },
+  "Stress": {
+   "n": 1519,
+   "share": 0.074,
+   "hit_2r": 0.352,
+   "avg_r_trail": 0.438,
+   "se_r_trail": 0.067,
+   "avg_r_fixed": 0.261
+  }
+ },
+ "by_grade": {
+  "A": {
+   "n": 11342,
+   "share": 0.554,
+   "hit_2r": 0.293,
+   "avg_r_trail": 0.054,
+   "se_r_trail": 0.022,
+   "avg_r_fixed": -0.042
+  },
+  "B": {
+   "n": 6377,
+   "share": 0.311,
+   "hit_2r": 0.268,
+   "avg_r_trail": -0.053,
+   "se_r_trail": 0.026,
+   "avg_r_fixed": -0.079
+  },
+  "C": {
+   "n": 2756,
+   "share": 0.135,
+   "hit_2r": 0.25,
+   "avg_r_trail": -0.095,
+   "se_r_trail": 0.037,
+   "avg_r_fixed": -0.106
+  }
+ },
+ "grade_x_state": {
+  "A/Calm trend": {
+   "n": 8572,
+   "share": 0.419,
+   "hit_2r": 0.291,
+   "avg_r_trail": 0.052,
+   "se_r_trail": 0.026,
+   "avg_r_fixed": -0.059
+  },
+  "A/Choppy": {
+   "n": 2012,
+   "share": 0.098,
+   "hit_2r": 0.273,
+   "avg_r_trail": -0.055,
+   "se_r_trail": 0.047,
+   "avg_r_fixed": -0.088
+  },
+  "A/Stress": {
+   "n": 758,
+   "share": 0.037,
+   "hit_2r": 0.367,
+   "avg_r_trail": 0.365,
+   "se_r_trail": 0.087,
+   "avg_r_fixed": 0.277
+  },
+  "B/Calm trend": {
+   "n": 4021,
+   "share": 0.196,
+   "hit_2r": 0.271,
+   "avg_r_trail": -0.112,
+   "se_r_trail": 0.032,
+   "avg_r_fixed": -0.093
+  },
+  "B/Choppy": {
+   "n": 2026,
+   "share": 0.099,
+   "hit_2r": 0.258,
+   "avg_r_trail": -0.001,
+   "se_r_trail": 0.046,
+   "avg_r_fixed": -0.073
+  },
+  "B/Stress": {
+   "n": 330,
+   "share": 0.016,
+   "hit_2r": 0.3,
+   "avg_r_trail": 0.356,
+   "se_r_trail": 0.159,
+   "avg_r_fixed": 0.064
+  },
+  "C/Calm trend": {
+   "n": 1298,
+   "share": 0.063,
+   "hit_2r": 0.24,
+   "avg_r_trail": -0.235,
+   "se_r_trail": 0.048,
+   "avg_r_fixed": -0.162
+  },
+  "C/Choppy": {
+   "n": 1027,
+   "share": 0.05,
+   "hit_2r": 0.213,
+   "avg_r_trail": -0.221,
+   "se_r_trail": 0.056,
+   "avg_r_fixed": -0.241
+  },
+  "C/Stress": {
+   "n": 431,
+   "share": 0.021,
+   "hit_2r": 0.364,
+   "avg_r_trail": 0.628,
+   "se_r_trail": 0.132,
+   "avg_r_fixed": 0.385
+  }
+ },
+ "note": "se_r_trail is a naive standard error; breakouts on the same day are correlated, so true uncertainty is larger. States: filtered probabilities, monthly expanding refits, no lookahead."
+}

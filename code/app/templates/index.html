@@ -46,6 +46,7 @@
   <div class="label">Market</div>
   <div class="market-head"><span class="market-state {{ state[1] }}">{{ state[0] }}</span>
     {% if market.grade %}<span class="chip {{ 'good' if market.grade == 'A' else 'bad' if market.grade == 'C' else 'wait' }}" title="A: breadth 60%+ and NIFTY above its 50-day. B: one of the two. C: neither. Since 2012, breakouts averaged +0.05R in A, −0.06R in B, −0.10R in C.">Grade {{ market.grade }}</span>{% endif %}
+    {% if market.hmm %}<span class="muted" style="font-size: 13px;" title="Hidden Markov Model on NIFTY's daily return and 20-day volatility: {% for k, v in market.hmm.probs.items() %}{{ k }} {{ (v * 100)|round|int }}%{{ ', ' if not loop.last }}{% endfor %}. A second opinion beside the grade; it doesn't change sizing.">HMM: {{ market.hmm.label }} {{ (market.hmm.prob * 100)|round|int }}%</span>{% endif %}
     {% if market.breadth_200 is not none and market.breadth_200 is defined %}<span class="muted" style="font-size: 13px;">{{ (market.breadth_200 * 100)|round|int }}% of stocks above their 200-day</span>{% endif %}</div>
   <div class="market-note">{{ posture.text }}</div>
   <div class="stats">

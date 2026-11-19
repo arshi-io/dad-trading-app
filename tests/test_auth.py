@@ -1,3 +1,4 @@
+import os
 import time
 
 import bcrypt
@@ -14,8 +15,14 @@ def _reset_rate_limit_state():
 
 
 @pytest.fixture
-def pin_hash(monkeypatch):
-    hashed = bcrypt.hashpw(b"255202", bcrypt.gensalt()).decode("utf-8")
+def fake_pin():
+    """A fake PIN for tests only -- never the real one (that lives only as a bcrypt hash in APP_PIN)."""
+    return os.environ.get("TEST_APP_PIN", "000111")
+
+
+@pytest.fixture
+def pin_hash(monkeypatch, fake_pin):
+    hashed = bcrypt.hashpw(fake_pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     monkeypatch.setattr(main, "APP_PIN_HASH", hashed)
     return hashed
 
@@ -25,24 +32,24 @@ def session_secret(monkeypatch):
     monkeypatch.setattr(main, "SESSION_SECRET", "test-only-secret")
 
 
-def test_check_pin_accepts_the_correct_pin(pin_hash):
-    assert main._check_pin("255202") is True
+def test_check_pin_accepts_the_correct_pin(pin_hash, fake_pin):
+    assert main._check_pin(fake_pin) is True
 
 
 def test_check_pin_rejects_a_wrong_pin(pin_hash):
     assert main._check_pin("000000") is False
 
 
-def test_check_pin_rejects_when_app_pin_unset(monkeypatch):
+def test_check_pin_rejects_when_app_pin_unset(monkeypatch, fake_pin):
     monkeypatch.setattr(main, "APP_PIN_HASH", None)
-    assert main._check_pin("255202") is False
+    assert main._check_pin(fake_pin) is False
 
 
-def test_check_pin_never_crashes_on_a_malformed_hash(monkeypatch):
+def test_check_pin_never_crashes_on_a_malformed_hash(monkeypatch, fake_pin):
     """If someone sets APP_PIN to plaintext by mistake, bcrypt.checkpw raises
     -- must degrade to "wrong PIN", never a 500."""
-    monkeypatch.setattr(main, "APP_PIN_HASH", "255202")
-    assert main._check_pin("255202") is False
+    monkeypatch.setattr(main, "APP_PIN_HASH", fake_pin)
+    assert main._check_pin(fake_pin) is False
 
 
 def test_session_round_trips(session_secret):
