@@ -1,1 +1,1 @@
-"""Signal package shim for Papa Terminal."""
+"""Signal package shim for Marketly."""

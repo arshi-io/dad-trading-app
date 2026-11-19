@@ -1,6 +1,6 @@
-# MarketPilot — implementation plan
+# Marketly — implementation plan
 
-MarketPilot is Papa Terminal grown into a market-hours copilot: the existing after-market
+Marketly is the original EOD dashboard grown into a market-hours copilot: the existing after-market
 engine stays exactly as it is, and live quotes, live alerts and a human-approved order
 workflow are added around it. Paper trading is the default and the only mode that can
 place anything until real execution is explicitly requested.

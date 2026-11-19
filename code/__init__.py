@@ -1,1 +1,1 @@
-"""Papa Terminal package."""
+"""Marketly package."""

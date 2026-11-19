@@ -1,4 +1,4 @@
-# Papa Terminal — EOD trading dashboard for one non-technical user
+# Marketly — EOD trading dashboard for one non-technical user
 
 ## Session protocol (always)
 - One phase per session. Spec: docs/phases/P{n}.md — read ONLY the current phase file.

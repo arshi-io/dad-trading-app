@@ -743,7 +743,7 @@ def _same_origin(request: Request) -> bool:
     return request.headers.get("sec-fetch-site", "same-origin") in ("same-origin", "none")
 
 
-app = FastAPI(title="Papa Terminal", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Marketly", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(RequestTimingMiddleware)

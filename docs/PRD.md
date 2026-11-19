@@ -1,4 +1,4 @@
-# PRD — MarketPilot
+# PRD — Marketly
 
 ## User
 One experienced discretionary swing trader on NSE cash equities who trades Mark Minervini's

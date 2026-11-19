@@ -1,6 +1,6 @@
 ---
 name: repo-conventions
-description: Load before writing or editing any Python in this repo. Folder layout, Signal contract, snapshot format, and extension rules for the Papa Terminal codebase.
+description: Load before writing or editing any Python in this repo. Folder layout, Signal contract, snapshot format, and extension rules for the Marketly codebase.
 ---
 
 # Repo conventions

@@ -1,4 +1,4 @@
-# Papa Terminal (MarketPilot)
+# Marketly
 
 A private, single-user NSE swing-trading copilot for a Minervini-style trader: after-market
 screening and setups, paper trading, and (in progress) market-hours alerts with a
