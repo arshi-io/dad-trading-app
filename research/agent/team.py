@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -44,10 +45,20 @@ def chat(cfg: Dict[str, Any], role: Dict[str, Any], system: str, user: str) -> s
                                 "system": system, "messages": [{"role": "user", "content": user}]})
         r.raise_for_status()
         return "".join(b.get("text", "") for b in r.json()["content"])
-    r = requests.post(f"{cfg['ollama_host']}/api/chat", timeout=900, json={
-        "model": role["model"], "stream": False, "keep_alive": "30m",
-        "options": {"temperature": role["temperature"], "seed": cfg.get("seed", 7)},
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]})
+    body = {"model": role["model"], "stream": False, "keep_alive": "30m",
+            "options": {"temperature": role["temperature"], "seed": cfg.get("seed", 7)},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    if "think" in role:      # reasoning models (qwen3): false skips the long hidden reasoning
+        body["think"] = role["think"]
+    for attempt in range(3):
+        r = requests.post(f"{cfg['ollama_host']}/api/chat", timeout=900, json=body)
+        # A model load can fail when RAM is nearly full (Ollama answers 500); memory is often freed
+        # a few seconds later, so wait and retry before giving up.
+        if r.status_code != 500 or attempt == 2:
+            break
+        time.sleep(15)
+    if r.status_code == 500:
+        raise RuntimeError(f"Ollama could not run {role['model']} (usually not enough free RAM; close other apps): {r.text[:200]}")
     r.raise_for_status()
     return r.json()["message"]["content"]
 

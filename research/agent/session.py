@@ -35,7 +35,8 @@ def _library(folder: Path, per_file: int = 3000, total: int = 20000) -> str:
 
 def run_session(symbols: List[str], cfg: Optional[Dict] = None, conn=None, llm: Callable = chat,
                 free: Callable = unload, submit: Callable = gatekeeper.submit,
-                test: Callable = lab.backtest, library: Path = LIBRARY) -> Dict[str, Any]:
+                test: Callable = lab.backtest, smoke: Callable = lab.smoke,
+                library: Path = LIBRARY) -> Dict[str, Any]:
     cfg = cfg or load_config()
     conn = conn or journal.connect()
     R = cfg["roles"]
@@ -55,6 +56,9 @@ def run_session(symbols: List[str], cfg: Optional[Dict] = None, conn=None, llm: 
         try:
             h = _ask_json(llm, cfg, R["idea_maker"], R["idea_maker"]["system"],
                           f"Idea: {it['idea']}\nSource: {it.get('source', '')}")
+            if h["family"] == "not_testable":
+                log.info("idea_maker: not testable with daily price data: %s", it["idea"])
+                continue
             hyps.append({**it, **{k: str(h[k]) for k in ("family", "hypothesis", "rule")}})
         except (ValueError, KeyError, TypeError) as e:
             log.warning("idea_maker skipped an idea: %s", e)
@@ -63,8 +67,14 @@ def run_session(symbols: List[str], cfg: Optional[Dict] = None, conn=None, llm: 
     # 3. Coder: one strategy per hypothesis, then optional ensembles of already-tested strategies.
     candidates = []
     for h in hyps:
+        ask = f"Hypothesis: {h['hypothesis']}\nRule: {h['rule']}"
         try:
-            code = parse_code(llm(cfg, R["coder"], R["coder"]["system"], f"Hypothesis: {h['hypothesis']}\nRule: {h['rule']}"))
+            code = parse_code(llm(cfg, R["coder"], R["coder"]["system"], ask))
+            try:
+                smoke(code, symbols[0])
+            except Exception as e:   # one repair attempt with the error; a second failure is logged in step 4
+                code = parse_code(llm(cfg, R["coder"], R["coder"]["system"],
+                                      f"{ask}\n\nYour code:\n```python\n{code}```\nfailed with: {e}\nFix it."))
             candidates.append({**h, "kind": "single", "code": code})
         except ValueError as e:
             log.warning("coder skipped %s: %s", h["family"], e)

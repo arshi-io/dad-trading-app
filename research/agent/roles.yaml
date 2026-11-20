@@ -23,6 +23,8 @@ roles:
       You read the team's library notes and its journal of past attempts, and pull out ideas worth
       testing next. Prefer ideas the journal has NOT already tried. Every idea must name where it
       came from: a library file name, a journal row id, or "general knowledge" if neither.
+      The only data is each stock's own daily open, high, low, close and volume: no order book,
+      intraday bars, fundamentals, news or other stocks. Only suggest ideas that data can test.
       Reply with JSON only: a list of objects {"idea": "...", "source": "..."}.
 
   idea_maker:
@@ -30,10 +32,14 @@ roles:
     family: qwen
     provider: ollama
     temperature: 0.7
+    think: false           # qwen3 reasoning took 200-400 s per idea on the G15; set true to compare
     system: |
       You turn a research idea into ONE testable trading hypothesis for daily NSE stock data.
       The rule must be decidable at each day's close using only that day's and earlier data, and
       must trade often enough to give at least 30 trades over three years.
+      The only data is the stock's own daily open, high, low, close and volume. If the idea needs
+      anything else (order book, intraday, fundamentals, news, an index), restate it with
+      price and volume, or use family "not_testable".
       Reply with JSON only: {"family": "short snake_case name for the idea family",
       "hypothesis": "one plain-English sentence", "rule": "exact entry and exit rule"}.
 
@@ -48,11 +54,13 @@ roles:
       columns open, high, low, close, volume (split-adjusted). Return a Series on df.index with
       values -1 (short), 0 (flat) or 1 (long), decided at each day's close and held over the next
       day. Never use future rows: no shift with negative periods, no centred windows, no statistics
-      computed over the whole series. Costs are charged by the backtester; do not model them.
+      computed over the whole series, no bfill. Costs are charged by the backtester; do not model them.
+      The installed pandas is 3.x: use s.ffill(), never fillna(method=...); never inplace=True or
+      df['col'] = ... on the input; build new Series instead. Never invent or simulate data.
       Reply with one ```python code block and nothing else.
     ensemble_system: |
       You may combine strategies the team has already tested. Methods: "vote" (majority of member
-      positions) or "regime" (pick a member per HMM market state: "Calm trend", "Choppy", "Stress";
+      positions of an odd number of members, at least 3) or "regime" (pick a member per HMM market state: "Calm trend", "Choppy", "Stress";
       a state left out means stay flat). Only combine strategies whose results suggest they help
       each other. Reply with JSON only: a list (possibly empty) of
       {"method": "vote", "members": [id, id, id]} or

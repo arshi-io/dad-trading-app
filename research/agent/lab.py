@@ -23,6 +23,11 @@ def _data(symbol: str) -> pd.DataFrame:
     return gatekeeper.get_data(symbol, "B")
 
 
+def smoke(source: str, symbol: str) -> None:
+    """Run the strategy once (no scoring) so the coder can fix a crash while it is still loaded."""
+    _run(source, _data(symbol), [])
+
+
 def backtest(source: str, symbol: str) -> Dict[str, Any]:
     df = _data(symbol)
     if len(df) < 600:

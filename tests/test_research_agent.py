@@ -42,6 +42,7 @@ class FakeTeam:
 
     def __init__(self, code=(CYCLE, PEEK), critic="pass", ensembles="[]"):
         self.code, self.critic_verdict, self.ensembles = list(code), critic, ensembles
+        self.n_ideas = len(self.code)
         self.loaded, self.events = None, []
 
     def llm(self, cfg, role, system, user):
@@ -51,7 +52,7 @@ class FakeTeam:
         self.events.append(("call", role["role"]))
         r = role["role"]
         if r == "librarian":
-            return json.dumps([{"idea": f"idea {i}", "source": "general knowledge"} for i in range(len(self.code))])
+            return json.dumps([{"idea": f"idea {i}", "source": "general knowledge"} for i in range(self.n_ideas)])
         if r == "idea_maker":
             k = int(re.search(r"idea (\d+)", user).group(1))
             return json.dumps({"family": f"fam{k}", "hypothesis": f"h{k}", "rule": f"r{k}"})
@@ -141,6 +142,14 @@ def test_only_critic_passed_ideas_reach_the_gate(env):
     assert any("lookahead" in c for c in by_fam["fam1"]["checks"])
     assert by_fam["fam0"]["status"] == "gated" and by_fam["fam0"]["gate_passed"] == 1
     assert [s[1] for s in submitted] == [f"journal #{by_fam['fam0']['id']} fam0"]
+
+
+def test_coder_gets_one_repair_attempt(env):
+    broken = "```python\ndef positions(df):\n    return df['close'].nope()\n```"
+    fake = FakeTeam(code=[broken])                      # librarian offers one idea
+    fake.code.append(CYCLE)                             # the coder's second reply is the fix
+    out, _ = _run(env, fake)
+    assert len(out["rows"]) == 1 and out["rows"][0]["status"] == "gated"   # one idea, repaired
 
 
 def test_critic_model_can_veto(env):
