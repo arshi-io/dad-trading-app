@@ -159,7 +159,8 @@
 {% set word = {"IN BUY RANGE": ("IN BUY RANGE", "go"), "BASING": ("BASING — buy only on a breakout", "wait"), "EXTENDED": ("EXTENDED — don't chase", "no"), "NO BASE YET": ("NO PROPER BASE YET", "no")}.get(s.status, (s.status, "no")) %}
 <div class="card setup-card">
   <div class="label">Minervini setup</div>
-  <div class="status {{ word[1] }}">{{ word[0] }}</div>
+  <div class="status {{ word[1] }}">{{ word[0] }} <span class="muted" style="font-size: 12px; font-weight: 400;">at last close</span></div>
+  <span class="live-signal" data-live-signal="{{ asset }}" hidden></span>
   <div class="why-text" style="margin-top: 6px;">
     {% if s.status == "IN BUY RANGE" %}Broke out above the ₹{{ "{:,.2f}".format(s.pivot) }} pivot and is {{ s.pct_past_pivot }}% past it — inside the 5% buy range.
     {% elif s.status == "BASING" %}{{ s.base_bars }}-day base, {{ s.base_depth_pct }}% deep. Buy point is a move through ₹{{ "{:,.2f}".format(s.pivot) }}, {{ s.pct_to_pivot }}% above here.

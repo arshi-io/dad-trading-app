@@ -129,3 +129,62 @@ def test_nan_yahoo_bar_filled_from_bhavcopy(monkeypatch):
     out = np_._patch_from_bhavcopy("CUPID.NS", df.copy())
     assert out.loc["2026-10-05", "close"] == 318.0 and out.loc["2026-10-05", "volume"] == 15.0   # Yahoo volume kept
     assert np_._patch_from_bhavcopy("^NSEI", df.copy())["close"].isna().sum() == 1              # non-.NS untouched
+
+
+def test_prefs_validate_default_and_audit():
+    assert state.pref("paper_capital") == 1_000_000 and state.pref("default_exit_rule") == "trail21"
+    assert state.set_pref("paper_capital", "25,00,000", "tester") == 2_500_000
+    assert state.pref("paper_capital") == 2_500_000
+    with pytest.raises(ValueError, match="between"):
+        state.set_pref("paper_capital", "500", "tester")
+    with pytest.raises(ValueError):
+        state.set_pref("default_exit_rule", "yolo", "tester")
+    assert state.pref("paper_capital") == 2_500_000          # a rejected value changes nothing
+    from code.trading.predict import paper_capital, suggested_qty
+    assert paper_capital() == 2_500_000 and suggested_qty(100, 95, 1.0) == 5000   # ₹25k risk / ₹5 per share
+    conn = db.connect()
+    actions = [r["action"] for r in conn.execute("SELECT action FROM audit_log")]
+    conn.close()
+    assert actions.count("setting_changed") == 1 and audit.verify()["ok"]
+
+
+def _open_client(monkeypatch):
+    from code.app import main
+    monkeypatch.setattr(main, "APP_PIN_HASH", None)
+    monkeypatch.setattr(main, "market_session", lambda: MarketSession(HOLIDAYS))
+    return main, TestClient(main.app)
+
+
+def test_settings_page_saves_and_rejects(monkeypatch):
+    main, client = _open_client(monkeypatch)
+    assert client.get("/settings").status_code == 200
+    origin = {"Origin": "http://testserver"}
+    r = client.post("/settings", data={"paper_capital": "5,00,000", "default_exit_rule": "target"}, headers=origin, follow_redirects=False)
+    assert r.status_code == 303 and "saved" in r.headers["location"]
+    assert state.pref("paper_capital") == 500_000 and state.pref("default_exit_rule") == "target" and state.pref("beginner_mode") == "0"
+    r = client.post("/settings", data={"paper_capital": "abc", "default_exit_rule": "target"}, headers=origin, follow_redirects=False)
+    assert "error" in r.headers["location"] and state.pref("paper_capital") == 500_000
+    assert "5,00,000" in client.get("/settings").text
+
+
+def test_halt_from_settings_blocks_paper_trades(monkeypatch):
+    main, client = _open_client(monkeypatch)
+    pred = {"symbol": "X.NS", "kind": "stock", "side": "BUY", "entry": 100.0, "stop": 95.0, "target": 110.0, "qty": 10, "tradeable": True, "order": "NOW", "asof": "2026-11-19"}
+    monkeypatch.setattr(main, "_load_latest_snapshot", lambda: {"predictions": [pred]})
+    placed = []
+    monkeypatch.setattr(main, "place_trade", lambda *a, **k: placed.append(a) or {"status": "success"})
+    origin = {"Origin": "http://testserver"}
+    client.post("/settings", data={"halt": "1", "reason": "test"}, headers=origin)
+    assert state.is_halted()
+    r = client.post("/api/place-trade", data={"symbol": "X.NS", "qty": "5"}, headers=origin)
+    assert r.status_code == 409 and "halted" in r.json()["msg"] and not placed
+    assert "HALTED" in client.get("/settings").text
+    client.post("/settings", data={"halt": "0"}, headers=origin)
+    assert client.post("/api/place-trade", data={"symbol": "X.NS", "qty": "5"}, headers=origin).json()["status"] == "success" and placed
+
+
+def test_lab_page_lists_all_blocks(monkeypatch):
+    main, client = _open_client(monkeypatch)
+    from code.trading.model_lab import NODE_TYPES
+    html = client.get("/lab?symbol=RELIANCE").text
+    assert all(f'data-add="{k}"' for k in NODE_TYPES) and all(f'data-add="{k}"' in html for k in NODE_TYPES)

@@ -43,6 +43,7 @@ def stock_metrics(df: pd.DataFrame) -> Dict[str, Any]:
         "pct_above_50": round((last / sma50 - 1) * 100, 1) if sma50 else None,
         "above_200": (last > sma200) if sma200 else None,
         "vol_ratio": round(float(vol.iloc[-1]) / avg_vol50, 2) if avg_vol50 else None,
+        "avg_vol50": round(avg_vol50) if avg_vol50 else None,
     }
 
 

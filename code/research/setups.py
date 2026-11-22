@@ -24,12 +24,15 @@ HOLD, TARGET_R, ATR_MULT, COST = 20, 2.0, 1.5, 0.0025
 MIN_PRICE, MIN_TURNOVER = 30.0, 5e7          # ₹5 crore median daily turnover
 MIN_ATR_PCT = 0.01                            # a 1.5×ATR stop under ~1.5% means it isn't a swing stock
 ETF_MARKERS = ("BEES", "ETF", "LIQUID", "GILT", "SDL", "NIFTY", "SENSEX", "GOLD", "SILVER")
+# ETFs whose symbols carry none of the markers (found in the 2011+ bhavcopy).
+# ponytail: hand list; switch to NSE's published ETF list if more slip through.
+ETF_SYMBOLS = {"HDFCSML250", "ICICILIQ", "MASPTOP50", "MON100", "MONQ50", "N100"}
 
 
 def is_equity(symbol: str) -> bool:
     """NSE's cash file includes ETFs and debt funds; their near-zero ranges make R meaningless."""
     s = symbol.upper()
-    return not any(m in s for m in ETF_MARKERS)
+    return s not in ETF_SYMBOLS and not any(m in s for m in ETF_MARKERS)
 
 
 def build_panel() -> Dict[str, pd.DataFrame]:

@@ -1,0 +1,323 @@
+{
+ "generated": "2026-11-23",
+ "horizon": 20,
+ "valid": [
+  "2021-01-01",
+  "2024-01-01"
+ ],
+ "min_gain": 0.002,
+ "tried": [
+  {
+   "key": "blend(hgb6 | rankret | base+quant | raw + hgb6 | rankret | base+quant+trend | raw + hgb3 | rankret | base+quant+trend | raw)",
+   "round": 5,
+   "ic": 0.055,
+   "t": 3.3,
+   "ic_days_positive": 0.6937,
+   "spread": 0.01556,
+   "days": 741
+  },
+  {
+   "key": "blend(hgb6 | rankret | base+quant | raw + hgb6 | rankret | base+quant+trend | raw + hgb3 | rankret | base+quant+trend | raw + hgb3 | rankret | base+quant | raw + hgb6 | beat | base+quant+trend | raw)",
+   "round": 5,
+   "ic": 0.0546,
+   "t": 3.3,
+   "ic_days_positive": 0.6869,
+   "spread": 0.01467,
+   "days": 741
+  },
+  {
+   "key": "blend(hgb6 | rankret | base+quant | raw + hgb6 | rankret | base+quant+trend | raw)",
+   "round": 5,
+   "ic": 0.0544,
+   "t": 3.4,
+   "ic_days_positive": 0.6923,
+   "spread": 0.01686,
+   "days": 741
+  },
+  {
+   "key": "hgb6 | rankret | base+quant | raw",
+   "round": 4,
+   "ic": 0.0543,
+   "t": 3.4,
+   "ic_days_positive": 0.6977,
+   "spread": 0.01615,
+   "days": 741
+  },
+  {
+   "key": "hgb6 | rankret | base+quant+trend | raw",
+   "round": 3,
+   "ic": 0.0537,
+   "t": 3.4,
+   "ic_days_positive": 0.6937,
+   "spread": 0.01664,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | rankret | base+quant+trend | raw",
+   "round": 2,
+   "ic": 0.0508,
+   "t": 3.1,
+   "ic_days_positive": 0.6883,
+   "spread": 0.01288,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | rankret | base+quant | raw",
+   "round": 2,
+   "ic": 0.0502,
+   "t": 3.1,
+   "ic_days_positive": 0.6869,
+   "spread": 0.01222,
+   "days": 741
+  },
+  {
+   "key": "hgb6 | beat | base+quant+trend | raw",
+   "round": 4,
+   "ic": 0.0498,
+   "t": 3.3,
+   "ic_days_positive": 0.6775,
+   "spread": 0.01132,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | rankret | base+quant+trend | xsrank",
+   "round": 3,
+   "ic": 0.0484,
+   "t": 2.9,
+   "ic_days_positive": 0.6802,
+   "spread": 0.01353,
+   "days": 741
+  },
+  {
+   "key": "linear | rankret | base+quant+trend | raw",
+   "round": 3,
+   "ic": 0.0467,
+   "t": 2.6,
+   "ic_days_positive": 0.6599,
+   "spread": 0.00958,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | beat | base+quant+trend | raw",
+   "round": 3,
+   "ic": 0.0466,
+   "t": 2.8,
+   "ic_days_positive": 0.664,
+   "spread": 0.00877,
+   "days": 741
+  },
+  {
+   "key": "hgb6 | rankret | base+quant+trend | xsrank",
+   "round": 4,
+   "ic": 0.0466,
+   "t": 3.1,
+   "ic_days_positive": 0.6842,
+   "spread": 0.01244,
+   "days": 741
+  },
+  {
+   "key": "hgb6 | rankret | base | raw",
+   "round": 2,
+   "ic": 0.0441,
+   "t": 2.8,
+   "ic_days_positive": 0.6788,
+   "spread": 0.01269,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | rankret | base | xsrank",
+   "round": 2,
+   "ic": 0.044,
+   "t": 2.7,
+   "ic_days_positive": 0.6545,
+   "spread": 0.00914,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | rankret | base | raw",
+   "round": 1,
+   "ic": 0.0429,
+   "t": 2.6,
+   "ic_days_positive": 0.6626,
+   "spread": 0.00896,
+   "days": 741
+  },
+  {
+   "key": "linear | rankret | base | raw",
+   "round": 2,
+   "ic": 0.0421,
+   "t": 2.6,
+   "ic_days_positive": 0.6397,
+   "spread": 0.00674,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | beat | base | raw",
+   "round": 1,
+   "ic": 0.0413,
+   "t": 2.5,
+   "ic_days_positive": 0.6424,
+   "spread": 0.00762,
+   "days": 741
+  },
+  {
+   "key": "linear | up | base | raw",
+   "round": 1,
+   "ic": 0.0398,
+   "t": 3.0,
+   "ic_days_positive": 0.6856,
+   "spread": 0.00635,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | up | base+quant | raw",
+   "round": 1,
+   "ic": 0.036,
+   "t": 2.4,
+   "ic_days_positive": 0.6653,
+   "spread": 0.00773,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | up | base | xsrank",
+   "round": 1,
+   "ic": 0.0351,
+   "t": 2.1,
+   "ic_days_positive": 0.641,
+   "spread": 0.00438,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | up | base+quant+trend | raw",
+   "round": 1,
+   "ic": 0.0342,
+   "t": 2.3,
+   "ic_days_positive": 0.6653,
+   "spread": 0.00743,
+   "days": 741
+  },
+  {
+   "key": "hgb3 | up | base | raw",
+   "round": 0,
+   "ic": 0.0315,
+   "t": 2.1,
+   "ic_days_positive": 0.6397,
+   "spread": 0.00422,
+   "days": 741
+  },
+  {
+   "key": "hgb6 | up | base+quant+trend | raw",
+   "round": 4,
+   "ic": 0.0304,
+   "t": 2.2,
+   "ic_days_positive": 0.6424,
+   "spread": 0.00719,
+   "days": 741
+  },
+  {
+   "key": "hgb6 | up | base | raw",
+   "round": 1,
+   "ic": 0.0285,
+   "t": 2.0,
+   "ic_days_positive": 0.6343,
+   "spread": 0.00389,
+   "days": 741
+  }
+ ],
+ "rounds": [
+  {
+   "round": 0,
+   "best": "hgb3 | up | base | raw",
+   "ic": 0.0315
+  },
+  {
+   "round": 1,
+   "best": "hgb3 | rankret | base | raw",
+   "ic": 0.0429,
+   "improved": true
+  },
+  {
+   "round": 2,
+   "best": "hgb3 | rankret | base+quant+trend | raw",
+   "ic": 0.0508,
+   "improved": true
+  },
+  {
+   "round": 3,
+   "best": "hgb6 | rankret | base+quant+trend | raw",
+   "ic": 0.0537,
+   "improved": true
+  },
+  {
+   "round": 4,
+   "best": "hgb6 | rankret | base+quant+trend | raw",
+   "ic": 0.0537,
+   "improved": false
+  },
+  {
+   "round": 5,
+   "best": "hgb6 | rankret | base+quant+trend | raw",
+   "ic": 0.0537,
+   "blends": true
+  }
+ ],
+ "best": {
+  "key": "hgb6 | rankret | base+quant+trend | raw",
+  "round": 3,
+  "ic": 0.0537,
+  "t": 3.4,
+  "ic_days_positive": 0.6937,
+  "spread": 0.01664,
+  "days": 741
+ },
+ "baseline": {
+  "key": "hgb3 | up | base | raw",
+  "round": 0,
+  "ic": 0.0315,
+  "t": 2.1,
+  "ic_days_positive": 0.6397,
+  "spread": 0.00422,
+  "days": 741
+ },
+ "locked": {
+  "from": "2024-01-01",
+  "best": {
+   "key": "hgb6 | rankret | base+quant+trend | raw",
+   "ic": 0.091,
+   "t": 5.9,
+   "ic_days_positive": 0.8447,
+   "spread": 0.02421,
+   "days": 676
+  },
+  "baseline": {
+   "key": "hgb3 | up | base | raw",
+   "ic": 0.0704,
+   "t": 4.0,
+   "ic_days_positive": 0.7692,
+   "spread": 0.01547,
+   "days": 676
+  }
+ },
+ "locked_history": [
+  {
+   "date": "2026-11-23",
+   "from": "2024-01-01",
+   "best": {
+    "key": "hgb6 | rankret | base+quant+trend | raw",
+    "ic": 0.091,
+    "t": 5.9,
+    "ic_days_positive": 0.8447,
+    "spread": 0.02421,
+    "days": 676
+   },
+   "baseline": {
+    "key": "hgb3 | up | base | raw",
+    "ic": 0.0704,
+    "t": 4.0,
+    "ic_days_positive": 0.7692,
+    "spread": 0.01547,
+    "days": 676
+   }
+  }
+ ]
+}

@@ -26,6 +26,22 @@
         : Math.abs(d).toFixed(1) + "% below pivot";
       el.className = "live-pivot " + (d > 5 ? "down" : d >= 0 ? "up" : "muted");
     });
+    // Live guidance from code/signals/live_rules.py: one action word + why, per setup / position.
+    const show = (el, g) => {
+      el.hidden = !g;
+      if (!g) return;
+      el.replaceChildren();
+      const chip = document.createElement("span");
+      chip.className = "chip " + g.cls;
+      chip.textContent = g.state;
+      el.append(chip, g.text);
+    };
+    each("data-live-signal", (el, s) => {
+      show(el, (data.signals || {})[s]);
+      const pivot = el.parentNode.querySelector("[data-live-pivot]");
+      if (pivot && (data.signals || {})[s]) pivot.hidden = true;  // the signal already says where price is
+    });
+    each("data-live-pos", (el, id) => show(el, (data.positions || {})[id]));
     // Paper positions: mark-to-market on the live price.
     each("data-live-pnl", (el, s) => {
       if (!q[s]) return;

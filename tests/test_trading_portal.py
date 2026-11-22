@@ -149,6 +149,14 @@ def test_candidates_cover_passes_entry_pairs_and_watchlist():
     assert next(c for c in out if c["symbol"] == "P1.NS")["on_watchlist"] is True
 
 
+def test_candidates_always_include_todays_setups(monkeypatch):
+    from code.trading import predict
+    monkeypatch.setattr(predict, "MAX_SCREEN_PREDICTIONS", 1)
+    screen = {"items": [{"symbol": "HI.NS", "passed": True, "rs_rank": 99}, {"symbol": "LO.NS", "passed": True, "rs_rank": 70}]}
+    assert [c["symbol"] for c in predict.prediction_candidates(screen, {}, [])] == ["HI.NS"]
+    assert [c["symbol"] for c in predict.prediction_candidates(screen, {}, [], ["LO.NS"])] == ["HI.NS", "LO.NS"]
+
+
 def test_breakout_order_fills_through_trigger_then_hits_target():
     portal.place_trade("BO.NS", "BUY", 100.0, "minervini", qty=10, target=110.0, stop=95.0, pending=True)
     future = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
@@ -207,3 +215,79 @@ def test_headlines_must_name_the_company():
     from code.evaluator.memo import match_headlines
     news = [{"title": "Buy HDFC Bank; target 1850", "ts": ""}, {"title": "Cupid Ltd hits record high", "ts": ""}]
     assert [h["title"] for h in match_headlines("CUPID.NS", news)] == ["Cupid Ltd hits record high"]
+
+
+def test_plan_uses_the_screens_setup():
+    from code.trading.predict import predict_stock
+    rng = np.random.default_rng(0)
+    df = _ohlcv(100 * np.exp(np.cumsum(rng.normal(0, 0.015, 400))))
+    setup = {"status": "BASING", "pivot": 123.45, "pct_to_pivot": 2.0, "vcp": False}
+    plan = predict_stock("X.NS", df, setup=setup)
+    assert plan["setup"] is setup and plan["order"] == "STOP" and plan["entry"] == round(123.45 * 1.001, 2)
+
+
+def test_position_view_has_chart_ranges_and_plan():
+    from code.trading.predict import position_view
+    rng = np.random.default_rng(1)
+    df = _ohlcv(100 * np.exp(np.cumsum(rng.normal(0, 0.015, 400))))
+    last = float(df["close"].iloc[-1])
+    trade = {"ticker": "X.NS", "entry_price": last * 0.9, "stop": last * 0.85, "target": last * 1.0, "qty": 10, "exit_rule": "target"}
+    v = position_view(trade, df)
+    assert v["candles"] and v["path_high"] and v["week_low"] < v["week_high"]
+    titles = [s["title"] for s in v["steps"]]
+    assert titles[:3] == ["Stop", "Protect", "Take profit"] and titles[3].startswith("Tonight:")
+    assert v["r_now"] == round((last - trade["entry_price"]) / (trade["entry_price"] - trade["stop"]), 2)
+    assert v["steps"][1]["state"] == "done"            # price is past +1R, so the break-even step is done
+    assert any("next week's likely range" in o for o in v["outlook"])
+    assert position_view({**trade, "stop": None}, df)["steps"][0]["title"] == "Set a stop"
+
+
+def _q(ltp, high, low, open_, stale=False, simulated=False):
+    return {"ltp": ltp, "day_high": high, "day_low": low, "day_open": open_, "stale": stale, "simulated": simulated}
+
+
+def test_live_fill_rules():
+    today = pd.Timestamp.today().date().isoformat()
+    old = portal.place_trade("OLD.NS", "BUY", 100.0, "minervini", qty=10, target=110.0, stop=95.0, pending=True)["id"]
+    new = portal.place_trade("NEW.NS", "BUY", 100.0, "minervini", qty=10, target=110.0, stop=95.0, pending=True)["id"]
+    stopped = portal.place_trade("STP.NS", "BUY", 100.0, "minervini", qty=10, target=110.0, stop=95.0, pending=True)["id"]
+    conn = portal._conn()
+    conn.execute("UPDATE paper_trades SET created_at='2026-01-01T10:00:00' WHERE id IN (?, ?)", (old, stopped))
+    conn.commit(); conn.close()
+    quotes = {"OLD.NS": _q(103, 104, 101, 102), "NEW.NS": _q(99, 101, 98, 99), "STP.NS": _q(101, 102, 94, 96)}
+    assert portal.fill_pending_live({k: {**v, "stale": True} for k, v in quotes.items()}, today) == []
+    assert portal.fill_pending_live({k: {**v, "simulated": True} for k, v in quotes.items()}, today) == []
+    assert portal.fill_pending_live(quotes, today) == [old]          # NEW is back under its trigger; STP touched the stop
+    t = next(x for x in portal.get_trades(status="open") if x["id"] == old)
+    assert t["entry_price"] == 102.0 and t["entry_date"] == today       # gapped through: fills at the open
+    assert portal.fill_pending_live({"NEW.NS": _q(100.5, 101, 98, 99)}, today) == [new]
+    assert next(x for x in portal.get_trades(status="open") if x["id"] == new)["entry_price"] == 100.0
+
+
+def test_touch_probability_and_pending_view():
+    from code.trading.predict import position_view, touch_probability
+    assert touch_probability(100, 100, 0.02) == 1.0
+    assert 0.3 < touch_probability(100, 102, 0.02) < 0.33        # 1σ away: 2·(1 − Φ(1)) ≈ 0.317
+    assert touch_probability(100, 110, 0.02) < 0.001
+    rng = np.random.default_rng(3)
+    df = _ohlcv(100 * np.exp(np.cumsum(rng.normal(0, 0.015, 400))))
+    last = float(df["close"].iloc[-1])
+    v = position_view({"ticker": "X.NS", "status": "pending", "entry_price": last * 1.02, "stop": last * 0.95, "target": last * 1.15,
+                       "qty": 10, "created_at": str(df.index[-3].date())}, df)
+    assert v["pending"] and v["steps"][0]["title"] == "Waiting" and 0 < v["trigger_prob"] < 1
+    assert v["tomorrow"]["action"] == "WAIT FOR BREAKOUT" and "8 sessions left" in v["tomorrow"]["text"]
+    o = position_view({"ticker": "X.NS", "status": "open", "entry_price": last, "stop": last * 0.95, "target": last * 1.1, "qty": 10}, df)
+    assert o["tomorrow"]["action"] and "chance" in o["tomorrow"]["text"] or o["tomorrow"]["action"] in ("SELL", "SELL HALF", "RAISE STOP")
+
+
+def test_portfolio_outlook_replays_history():
+    from code.trading.predict import portfolio_outlook
+    rng = np.random.default_rng(4)
+    a = _ohlcv(100 * np.exp(np.cumsum(rng.normal(0, 0.01, 300))))
+    b = _ohlcv(50 * np.exp(np.cumsum(rng.normal(0, 0.02, 300))))
+    ta = {"id": 1, "qty": 100, "entry_price": float(a["close"].iloc[-1]) * 0.9, "stop": float(a["close"].iloc[-1]) * 0.95}
+    tb = {"id": 2, "qty": 50, "entry_price": float(b["close"].iloc[-1]), "stop": None}
+    o = portfolio_outlook([(ta, a), (tb, b)], 1_000_000)
+    assert o["n"] == 2 and o["pnl"] > 0 and o["heat"] > 0 and o["days_used"] == 250
+    assert o["day_bad"] < o["day_lo"] < 0 < o["day_hi"] and o["week_lo"] < o["day_lo"] and o["week_hi"] > o["day_hi"]
+    assert portfolio_outlook([], 1_000_000) == {"n": 0, "invested": 0.0, "pnl": 0.0, "heat": 0.0}

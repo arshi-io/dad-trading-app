@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+import math
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,7 +25,16 @@ ATR_STOP_MULTIPLIER = 1.5  # locked risk rule
 TARGET_R = 2.0
 CHART_BARS = 90
 
-PAPER_CAPITAL = 1_000_000
+PAPER_CAPITAL = 1_000_000  # default; the Settings page can change it (paper_capital())
+
+
+def paper_capital() -> int:
+    """Account size from Settings, or the default when the app database isn't available (tests, research)."""
+    try:
+        from code.live.state import pref
+        return int(pref("paper_capital"))
+    except Exception:
+        return PAPER_CAPITAL
 RISK_PER_TRADE = 0.01
 MAX_POSITION_FRACTION = 0.20
 
@@ -60,8 +70,9 @@ def suggested_qty(entry: float, stop: float, risk_pct: float = RISK_PER_TRADE * 
     risk_per_share = abs(entry - stop)
     if risk_per_share <= 0 or entry <= 0:
         return 0
-    by_risk = (PAPER_CAPITAL * risk_pct / 100) / risk_per_share
-    by_size = (PAPER_CAPITAL * MAX_POSITION_FRACTION) / entry
+    capital = paper_capital()
+    by_risk = (capital * risk_pct / 100) / risk_per_share
+    by_size = (capital * MAX_POSITION_FRACTION) / entry
     return max(1, int(min(by_risk, by_size)))
 
 
@@ -80,7 +91,10 @@ def _results_fields(results_date: Optional[str]) -> Dict[str, Any]:
 def predict_stock(
     symbol: str, df: pd.DataFrame, reason: str = "",
     risk_pct: float = RISK_PER_TRADE * 100, results_date: Optional[str] = None,
+    setup: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
+    """`setup`: the screen's own base/pivot for this stock. Pass it so the plan and the screen agree;
+    detecting again on a different-length history can find a different base."""
     df = df.dropna(subset=["open", "high", "low", "close"])
     if len(df) < 60:
         return None
@@ -90,7 +104,7 @@ def predict_stock(
     if atr is None:
         return None
     last_day = pd.Timestamp(df.index[-1]).date()
-    setup = detect_setup(df)
+    setup = setup or detect_setup(df)
     metrics = stock_metrics(df)
 
     # BASING: a buy-stop just through the pivot -- the trade only exists if the breakout happens.
@@ -214,13 +228,17 @@ def predict_pair(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 MAX_SCREEN_PREDICTIONS = 60
 
 
-def prediction_candidates(screen: Dict[str, Any], pairs: Dict[str, Any], watchlist: List[str]) -> List[Dict[str, Any]]:
-    """Every stock passing all 8 conditions, every pair in its entry zone, and the watchlist."""
+def prediction_candidates(screen: Dict[str, Any], pairs: Dict[str, Any], watchlist: List[str],
+                          setups: List[str] = ()) -> List[Dict[str, Any]]:
+    """Every stock passing all 8 conditions, every pair in its entry zone, and the watchlist.
+    `setups` (Today's list) always get a plan, even below the RS cut -- live guidance needs one."""
     by_symbol = {i["symbol"]: i for i in screen.get("items", [])}
     out: List[Dict[str, Any]] = []
     passed = sorted((i for i in screen.get("items", []) if i.get("passed")), key=lambda i: i.get("rs_rank") or 0, reverse=True)
-    for i in passed[:MAX_SCREEN_PREDICTIONS]:
-        out.append({"symbol": i["symbol"], "source": "screen", "rs_rank": i.get("rs_rank"),
+    top = passed[:MAX_SCREEN_PREDICTIONS]
+    top += [by_symbol[s] for s in setups if s in by_symbol and by_symbol[s] not in top]
+    for i in top:
+        out.append({"symbol": i["symbol"], "source": "screen", "rs_rank": i.get("rs_rank"), "setup": i.get("setup"),
                     "reason": f"Passed all 8 Minervini conditions, RS rank {i.get('rs_rank')}", "link": f"/stock/{i['symbol']}"})
     for p in pairs.get("items", []):
         if p.get("status") in ("BUY", "SELL"):
@@ -233,7 +251,8 @@ def prediction_candidates(screen: Dict[str, Any], pairs: Dict[str, Any], watchli
         item = by_symbol.get(sym, {})
         cond = item.get("conditions_passed")
         reason = "On your watchlist" + (f" — {cond}/8 Minervini conditions, RS rank {item.get('rs_rank')}" if cond is not None else "")
-        out.append({"symbol": sym, "source": "watchlist", "rs_rank": item.get("rs_rank"), "reason": reason, "link": f"/stock/{sym}"})
+        out.append({"symbol": sym, "source": "watchlist", "rs_rank": item.get("rs_rank"), "setup": item.get("setup"),
+                    "reason": reason, "link": f"/stock/{sym}"})
     return out
 
 
@@ -252,7 +271,7 @@ def build_predictions(
                 pred = predict_pair(pair_items[symbol])
             else:
                 pred = predict_stock(symbol, fetch(symbol), entry.get("reason", ""),
-                                     risk_pct=risk_pct, results_date=results.get(symbol))
+                                     risk_pct=risk_pct, results_date=results.get(symbol), setup=entry.get("setup"))
         except Exception:
             logger.exception("prediction failed for %s", symbol)
             pred = None
@@ -262,4 +281,113 @@ def build_predictions(
             pred["rs_rank"] = entry.get("rs_rank")
             pred["on_watchlist"] = entry.get("on_watchlist", entry.get("source") == "watchlist")
             out.append(pred)
+    return out
+
+
+def daily_sigma(df: pd.DataFrame) -> float:
+    """The app's calibrated-range volatility (EWMA blended with one year), as a daily σ of log returns."""
+    from code.trading.ranges import _sigma
+    s = _sigma(np.log(df["close"].astype(float)).diff())
+    s = s[~np.isnan(s)]
+    return float(s[-1]) if len(s) else 0.02
+
+
+def touch_probability(price: float, level: float, sigma: float) -> float:
+    """Chance the price trades at `level` at some point next session, assuming no drift
+    (reflection principle: P(max ≥ level) = 2·(1 − Φ(ln(level/price)/σ)))."""
+    if price <= 0 or sigma <= 0:
+        return 0.0
+    d = abs(np.log(level / price)) / sigma
+    return float(min(1.0, 2 * (1 - 0.5 * (1 + math.erf(d / math.sqrt(2))))))
+
+
+def portfolio_outlook(open_items: List[Tuple[Dict[str, Any], pd.DataFrame]], capital: float) -> Dict[str, Any]:
+    """Next-session and next-week P&L ranges for the open book by historical simulation: replay the
+    last year's daily (and 5-day) moves of the stocks you hold, at today's quantities, and read the
+    quantiles. Keeps the real correlation between holdings instead of assuming one."""
+    out: Dict[str, Any] = {"n": len(open_items), "invested": 0.0, "pnl": 0.0, "heat": 0.0}
+    if not open_items:
+        return out
+    rets, value = {}, {}
+    for t, df in open_items:
+        qty, last = (t.get("qty") or 1), float(df["close"].iloc[-1])
+        out["invested"] += qty * last
+        out["pnl"] += qty * (last - t["entry_price"])
+        if t.get("stop") is not None:
+            out["heat"] += qty * max(0.0, last - t["stop"])
+        rets[t["id"]] = np.log(df["close"].astype(float)).diff()
+        value[t["id"]] = qty * last
+    joint = pd.DataFrame(rets).dropna().iloc[-250:]
+    out["heat_pct"] = out["heat"] / capital * 100 if capital else None
+    if len(joint) < 60:
+        return out
+    w = pd.Series(value)
+    day = ((np.exp(joint) - 1) * w).sum(axis=1)
+    week = ((np.exp(joint.rolling(5).sum().dropna()) - 1) * w).sum(axis=1)
+    q = lambda s, p: float(np.quantile(s, p))
+    out.update(day_lo=q(day, 0.16), day_hi=q(day, 0.84), day_bad=q(day, 0.05),
+               week_lo=q(week, 0.16), week_hi=q(week, 0.84), week_bad=q(week, 0.05), days_used=len(joint))
+    return out
+
+
+def position_view(trade: Dict[str, Any], df: pd.DataFrame, setup: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Chart data, calibrated ranges, the step-by-step plan and tomorrow's action for one long
+    position, open or still waiting to fill."""
+    from code.signals.sell_rules import sell_check
+    plan = predict_stock(trade["ticker"], df, setup=setup)
+    if plan is None:
+        return None
+    entry, stop, target = trade["entry_price"], trade.get("stop"), trade.get("target")
+    last = plan["last"]
+    pending = trade.get("status") == "pending"
+    check = None if pending else sell_check(df, stop)
+    out = {k: plan[k] for k in ("candles", "path_low", "path_high", "next_low", "next_high", "week_low", "week_high", "last")}
+    out.update(entry=entry, stop=stop, target=target, steps=[], outlook=[], pending=pending, sigma=round(daily_sigma(df), 5))
+    if pending:
+        since = pd.Timestamp(str(trade.get("created_at", ""))[:10] or df.index[-1])
+        left = max(0, 10 - int((pd.DatetimeIndex(df.index) > since).sum()))
+        p = touch_probability(last, entry, out["sigma"]) if last < entry else 1.0
+        out["trigger_prob"] = round(p, 2)
+        out["tomorrow"] = {"action": "WAIT FOR BREAKOUT", "cls": "wait",
+                           "text": f"Order waits at ₹{entry:,.2f}, {(entry / last - 1) * 100:.1f}% above the last close. About {p:.0%} chance it trades there next session. {left} session{'s' if left != 1 else ''} left before it expires."}
+        out["steps"].append({"state": "now", "title": "Waiting",
+                             "text": f"Buys only if it trades at ₹{entry:,.2f} or higher; cancelled if it falls to ₹{stop:,.2f} first, expires after {left} more session{'s' if left != 1 else ''}. Chance of a fill next session ≈ {p:.0%} (from its calibrated volatility, no direction assumed)."})
+    if stop is None:
+        out["steps"].append({"state": "now", "title": "Set a stop", "text": "This position has no stop. Without one there is no limit on the loss."})
+        return out
+    risk = entry - stop
+    one_r = entry + risk
+    r_now = 0.0 if pending else (last - entry) / risk if risk else 0.0
+    out["one_r"] = round(one_r, 2)
+    out["r_now"] = round(r_now, 2)
+    out["steps"] += [
+        {"state": "next" if pending else "done" if r_now >= 1 else "now", "title": "Stop",
+         "text": f"Sell if it trades at ₹{stop:,.2f} (−1R, ₹{risk * (trade.get('qty') or 1):,.0f}). Never move a stop down."},
+        {"state": "done" if r_now >= 1 else "next", "title": "Protect",
+         "text": f"At ₹{one_r:,.2f} (+1R) raise the stop to break-even ₹{entry:,.2f}, so the trade can't turn into a loss."},
+        {"state": "next", "title": "Take profit",
+         "text": (f"Hold while it closes above the 21-day average (₹{check['ema21']:,.2f} now); sell on the first close below it."
+                  if trade.get("exit_rule") == "trail21" and check else
+                  f"Sell at the target ₹{target:,.2f} (+2R)." if target else "No target set: trail the stop up under each higher low.")},
+    ]
+    if check:
+        out["steps"].append({"state": "now", "title": f"Tonight: {check['action']}", "text": check["reason"], "cls": check["cls"]})
+        if check["action"] in ("SELL", "SELL HALF"):
+            out["tomorrow"] = {"action": check["action"], "cls": "bad" if check["action"] == "SELL" else "good", "text": check["reason"]}
+        elif r_now >= 1:
+            out["tomorrow"] = {"action": "RAISE STOP", "cls": "good", "text": f"Up {r_now:.1f}R: move the stop to break-even ₹{entry:,.2f}. Then {check['reason'][0].lower()}{check['reason'][1:]}"}
+        else:
+            p = touch_probability(last, stop, out["sigma"])
+            out["tomorrow"] = {"action": check["action"], "cls": check["cls"],
+                               "text": f"{check['reason']} Stop ₹{stop:,.2f} is {(1 - stop / last) * 100:.1f}% below the last close (≈{p:.0%} chance it's hit next session)."}
+    if plan.get("week_low") is not None:
+        wl, wh = plan["week_low"], plan["week_high"]
+        out["outlook"] = [
+            f"Next session: likely ₹{plan['next_low']:,.2f}–₹{plan['next_high']:,.2f}. One week: ₹{wl:,.2f}–₹{wh:,.2f} (68% calibrated ranges; they say how far, not which way).",
+            (f"The stop is inside next week's likely range: a real chance it's hit. That is the risk the position was sized for."
+             if stop >= wl else f"The stop is below next week's likely range: it would take an unusually bad week to hit it."),
+            (f"The target is inside next week's likely range." if target and target <= wh else
+             f"The target is above next week's likely range: expect it to take more than a week." if target else ""),
+        ]
+        out["outlook"] = [o for o in out["outlook"] if o]
     return out

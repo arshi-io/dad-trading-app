@@ -1,0 +1,914 @@
+{% extends "base.html" %}
+{% block title %}Model Lab — Marketly{% endblock %}
+{% block extra_head %}
+<style>
+  main { max-width: 1320px; }
+  :root { --t-price: #9e9e9e; --t-dir: var(--blue); --t-vol: var(--amber); --t-comb: #b07cd8; --t-out: var(--green); }
+
+  /* ---- header: title + stock picker ---- */
+  .lab-head { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-bottom: 14px; }
+  .lab-head h1 { margin: 0; }
+  .lab-head .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .stock-pick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; }
+  .stock-pick .typeahead-wrap { flex: 0 1 260px; }
+  .stock-pick input { width: 100%; box-sizing: border-box; background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text); font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 6px; }
+  .stock-pick input:focus { border-color: var(--blue); outline: none; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chips a { font-size: 13px; padding: 5px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); white-space: nowrap; }
+  .chips a:hover { color: var(--text); text-decoration: none; }
+  .chips a.on { color: var(--text); border-color: var(--blue); background: var(--blue-dim); }
+  .chips .dot { color: var(--green); }
+
+  /* ---- beginner guide ---- */
+  .guide { display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; border: 1px solid rgba(65,132,243,.35); background: var(--blue-dim); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; }
+  .guide h3 { margin: 0 0 4px; font-size: 15px; }
+  .guide p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .steps-g { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 13px; }
+  .steps-g li { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .steps-g li .tick { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--border-strong); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+  .steps-g li.done { color: var(--text); }
+  .steps-g li.done .tick { background: var(--green); border-color: var(--green); color: #111; }
+  .steps-g li.next { color: var(--text); font-weight: 600; }
+  .steps-g li.next .tick { border-color: var(--blue); color: var(--blue); }
+  .guide .actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .linkbtn { background: none; border: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; padding: 2px; }
+  .linkbtn:hover { color: var(--text); }
+
+  /* ---- recommendation and scores ---- */
+  .rec { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; align-items: start; }
+  .rec .name { font-size: 16px; font-weight: 600; }
+  .rec .why { color: var(--muted); font-size: 13px; margin-top: 4px; line-height: 1.5; }
+  .metrics { display: grid; border-top: 1px solid var(--border); margin-top: 12px; }
+  .metrics.six { grid-template-columns: repeat(6, 1fr); }
+  .metrics.two { grid-template-columns: 1fr 1fr; }
+  .metrics > div { padding: 10px 12px 2px 0; }
+  .metrics > div + div { padding-left: 12px; border-left: 1px solid var(--border); }
+  .metrics.two > div:nth-child(odd) { border-left: none; padding-left: 0; }
+  .metrics .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; gap: 4px; }
+  .metrics .v { font-size: 18px; font-weight: 500; }
+  .metrics .s { font-size: 12px; color: var(--muted); }
+  .q { display: inline-flex; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--muted-2); color: var(--muted); font-size: 9px; align-items: center; justify-content: center; cursor: help; text-transform: none; letter-spacing: 0; }
+  .verdict { margin-top: 12px; padding: 10px 12px; border-radius: 4px; font-size: 13px; line-height: 1.5; background: var(--surface-2); border-left: 3px solid var(--muted-2); }
+  .verdict.good { border-left-color: var(--green); } .verdict.wait { border-left-color: var(--amber); } .verdict.bad { border-left-color: var(--red); }
+  table.rank { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  table.rank th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); }
+  table.rank td { padding: 7px 8px 7px 0; border-bottom: 1px solid var(--border); }
+  table.rank tr.best td:first-child { color: var(--green); }
+  table.rank .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .rank-wrap { overflow-x: auto; }
+  details.more summary { font-size: 13px; color: var(--muted); cursor: pointer; margin-top: 12px; }
+  .btn-xs { background: none; border: 1px solid var(--border-strong); color: var(--text); font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+  .btn-xs:hover { border-color: var(--muted-2); }
+
+  /* ---- editor: palette | canvas | inspector ---- */
+  .editor { display: grid; grid-template-columns: 210px 1fr 260px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+  .editor > * { min-width: 0; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); grid-column: 1 / -1; }
+  .toolbar select, .toolbar input { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 4px; }
+  .toolbar .btn { padding: 7px 14px; font-size: 13px; min-height: 0; }
+  .toolbar .group { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 5px; overflow: hidden; }
+  .toolbar .group button { background: none; border: none; color: var(--text); font: inherit; font-size: 13px; padding: 6px 10px; cursor: pointer; }
+  .toolbar .group button + button { border-left: 1px solid var(--border-strong); }
+  .toolbar .group button:disabled { opacity: .35; cursor: default; }
+  .toolbar .group button:hover:not(:disabled) { background: var(--surface-2); }
+  .toolbar .status { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .toolbar .status.err { color: var(--red); }
+
+  .palette { border-right: 1px solid var(--border); padding: 10px; overflow-y: auto; height: 560px; box-sizing: border-box; }
+  .palette input { width: 100%; box-sizing: border-box; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 13px; padding: 7px 9px; border-radius: 5px; margin-bottom: 4px; }
+  .palette .grp { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 12px 0 6px; display: flex; align-items: center; gap: 6px; }
+  .palette .grp i { width: 8px; height: 8px; border-radius: 2px; }
+  .blk { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 7px 8px; border-radius: 6px; margin-bottom: 5px; cursor: grab; touch-action: none; user-select: none; }
+  .blk:hover, .blk:focus-visible { border-color: var(--border-strong); outline: none; }
+  .blk[hidden], .grp[hidden] { display: none; }
+  .blk .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lvl { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; letter-spacing: .04em; }
+  .lvl.Beginner { color: var(--green); background: var(--green-dim); }
+  .lvl.Intermediate { color: var(--amber); background: var(--amber-dim); }
+  .lvl.Advanced { color: var(--red); background: var(--red-dim); }
+  .ico { width: 20px; height: 20px; border-radius: 5px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #111; }
+  .k-price { background: var(--t-price); } .k-dir { background: var(--t-dir); } .k-vol { background: var(--t-vol); } .k-comb { background: var(--t-comb); } .k-out { background: var(--t-out); }
+  .ghost { position: fixed; z-index: 100; pointer-events: none; opacity: .9; box-shadow: 0 8px 24px rgba(0,0,0,.5); margin: 0; }
+
+  .viewport { position: relative; overflow: auto; height: 560px; background-color: var(--bg); background-image: radial-gradient(circle, #2c2c2c 1px, transparent 1px); background-size: 20px 20px; }
+  .viewport.drop { outline: 2px dashed var(--blue); outline-offset: -6px; }
+  .sizer { position: relative; }
+  .canvas { position: absolute; left: 0; top: 0; width: 1400px; height: 800px; transform-origin: 0 0; }
+  .wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .wires path.w { fill: none; stroke-width: 2.2; pointer-events: none; }
+  .wires path.hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; pointer-events: stroke; }
+  .wires path.w.sel { stroke-width: 3.5; stroke: var(--red) !important; }
+  .wires path.temp { fill: none; stroke: var(--blue); stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; }
+  .wire-x { position: absolute; width: 24px; height: 24px; border-radius: 50%; background: var(--red); color: #fff; border: 2px solid var(--bg); font-size: 14px; line-height: 18px; text-align: center; cursor: pointer; transform: translate(-50%, -50%); z-index: 5; padding: 0; }
+  .empty-canvas { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); text-align: center; color: var(--muted); font-size: 14px; pointer-events: none; line-height: 1.6; }
+  .empty-canvas[hidden] { display: none; }
+
+  .node { position: absolute; width: 190px; box-sizing: border-box; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 9px; box-shadow: 0 4px 14px rgba(0,0,0,.35); user-select: none; touch-action: none; cursor: grab; }
+  .node::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 9px 0 0 9px; }
+  .node.k-price-n::before { background: var(--t-price); } .node.k-dir-n::before { background: var(--t-dir); } .node.k-vol-n::before { background: var(--t-vol); } .node.k-comb-n::before { background: var(--t-comb); } .node.k-out-n::before { background: var(--t-out); }
+  .node.sel { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue), 0 4px 14px rgba(0,0,0,.35); }
+  .node.warn { border-color: rgba(229,83,75,.55); }
+  .node .hd { display: flex; align-items: center; gap: 8px; padding: 9px 30px 3px 12px; font-size: 13px; font-weight: 600; }
+  .node .sub { padding: 0 10px 4px 40px; font-size: 11px; color: var(--muted); min-height: 14px; }
+  .node .need { padding: 0 10px 8px 40px; font-size: 11px; color: var(--red); }
+  .node .x { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 4px; border: none; background: none; color: var(--muted-2); font-size: 16px; line-height: 20px; cursor: pointer; padding: 0; }
+  .node .x:hover { color: var(--red); background: var(--red-dim); }
+  .port { position: absolute; width: 14px; height: 14px; box-sizing: border-box; border-radius: 50%; background: var(--surface); border: 2.5px solid; touch-action: none; cursor: crosshair; transition: transform .1s, opacity .1s; z-index: 2; }
+  .port::after { content: ""; position: absolute; inset: -9px; }  /* a bigger target for fingers */
+  .port.in { left: -8px; } .port.out { right: -8px; }
+  .port.t-price { border-color: var(--t-price); } .port.t-dir { border-color: var(--t-dir); } .port.t-vol { border-color: var(--t-vol); }
+  .port.t-price.filled { background: var(--t-price); } .port.t-dir.filled { background: var(--t-dir); } .port.t-vol.filled { background: var(--t-vol); }
+  .port .tip { position: absolute; top: -1px; font-size: 10px; color: var(--muted); white-space: nowrap; pointer-events: none; }
+  .port.in .tip { left: 16px; } .port.out .tip { right: 16px; }
+  .connecting .port { opacity: .2; }
+  .connecting .port.ok { opacity: 1; transform: scale(1.35); box-shadow: 0 0 0 4px rgba(76,175,80,.35); }
+  .connecting .port.hot { background: var(--green); border-color: var(--green); }
+
+  .inspector { border-left: 1px solid var(--border); padding: 14px; font-size: 13px; overflow-y: auto; height: 560px; box-sizing: border-box; }
+  .inspector h4 { margin: 0 0 4px; font-size: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .inspector .help { color: var(--text); margin: 8px 0; line-height: 1.5; }
+  .inspector .learn { color: var(--muted); line-height: 1.55; background: var(--surface-2); border-radius: 5px; padding: 10px; margin-bottom: 8px; }
+  .inspector label { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 12px 0 4px; }
+  .inspector input { width: 100%; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 4px; box-sizing: border-box; }
+  .inspector .row-btns { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .inspector .del { color: var(--red); }
+  .explain { line-height: 1.65; color: var(--text); }
+  .hint { color: var(--muted-2); font-size: 12px; line-height: 1.55; }
+  .kbd { font-size: 11px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; color: var(--muted); }
+  .legend-t { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend-t span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend-t i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid; }
+
+  .result { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+  #lab-chart { height: 300px; }
+  #lab-track { height: 150px; }
+  .ud-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+  .ud-p { font-size: 32px; font-weight: 600; }
+  .ud-word { font-size: 14px; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
+  .ud-word.edge { color: var(--green); border: 1px solid var(--green); } .ud-word.none { color: var(--amber); border: 1px solid var(--amber); }
+  .ud-word.avoid { color: var(--red); border: 1px solid var(--red); } .ud-word.mid { color: var(--muted); border: 1px solid var(--border); }
+  .ud-table.dec { table-layout: fixed; font-size: 12px; } .ud-table.dec td, .ud-table.dec th { padding: 3px 1px; text-align: center; }
+  .ud-table td.here { outline: 2px solid var(--blue); font-weight: 700; }
+  .ud-more { margin-top: 10px; font-size: 14px; } .ud-more summary { cursor: pointer; color: var(--blue); }
+  .ud-text { font-size: 14px; line-height: 1.7; margin-top: 6px; }
+  .ud-table { width: 100%; font-size: 13px; margin-top: 8px; border-collapse: collapse; }
+  .ud-table td, .ud-table th { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--border); }
+  .ud-table td:first-child, .ud-table th:first-child { text-align: left; }
+  .ud-table th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  .range-text { font-size: 15px; line-height: 1.6; margin-top: 8px; }
+  .range-text b { color: var(--amber); font-weight: 600; }
+  .track-text { font-size: 14px; line-height: 1.7; margin: 6px 0 8px; }
+  .track-text .word { font-weight: 600; } .track-text .up { color: var(--green); } .track-text .down { color: var(--red); } .track-text .flat { color: var(--amber); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 16px; height: 0; border-top: 2px dashed; vertical-align: middle; margin-right: 5px; }
+  .saved { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .saved div { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #2e2e2e; color: var(--text); padding: 10px 16px; border-radius: 6px; font-size: 14px; display: none; z-index: 120; max-width: 90vw; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+
+  @media (max-width: 1000px) {
+    .editor { grid-template-columns: 1fr; }
+    .palette { border-right: none; border-bottom: 1px solid var(--border); height: auto; max-height: 240px; }
+    .viewport { height: 460px; }
+    .inspector { border-left: none; border-top: 1px solid var(--border); height: auto; }
+    .result { grid-template-columns: 1fr; }
+    .metrics.six { grid-template-columns: 1fr 1fr; }
+    .metrics.six > div:nth-child(odd) { border-left: none; padding-left: 0; }
+    .stock-pick { margin-left: 0; width: 100%; }
+    .guide { grid-template-columns: 1fr; }
+    .guide .actions { flex-direction: row; align-items: center; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="lab-head">
+  <div>
+    <h1>Model Lab</h1>
+    <div class="sub">Build a price forecast from quant blocks, test it on {{ symbol|sym }}'s own history, and see which model works best. <a href="/lab/replay">Replay old weeks and the model search →</a> · <a href="/daily">Daily calls and ₹10,000 ledger →</a></div>
+  </div>
+  <div class="stock-pick">
+    <form id="lab-search" class="typeahead-wrap" autocomplete="off">
+      <input id="lab-ticker" type="text" placeholder="Open any NSE stock…" aria-label="Open any NSE stock in the Model Lab">
+      <div id="lab-ticker-dd" class="typeahead-dropdown" role="listbox" hidden></div>
+    </form>
+    <div class="chips">
+      {% for s in symbols %}<a href="/lab?symbol={{ s|sym }}" class="{{ 'on' if s == symbol }}" title="{{ 'Paper position' if s in held else 'Watchlist' }}">{% if s in held %}<span class="dot">●</span> {% endif %}{{ s|sym }}</a>{% endfor %}
+      {% if symbol not in symbols %}<a class="on">{{ symbol|sym }}</a>{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if beginner %}
+<div class="guide" id="guide">
+  <div>
+    <h3>New here? Build your first model in 5 steps</h3>
+    <p>A forecast has two parts: a <b style="color: var(--t-dir);">direction</b> block guesses which way the price goes, and a <b style="color: var(--t-vol);">volatility</b> block guesses how far it might move. Both feed the <b style="color: var(--t-out);">Forecast</b> block, and the app checks how the model would have done in the past.</p>
+    <ol class="steps-g" id="guide-steps"></ol>
+  </div>
+  <div class="actions">
+    <button class="btn btn-ghost" id="starter" style="padding: 7px 12px; font-size: 13px; min-height: 0;">Load a starter model</button>
+    <button class="linkbtn" id="hide-guide">Hide guide (turn off in Settings)</button>
+  </div>
+</div>
+{% endif %}
+
+<div class="card" id="rec-card">
+  <div class="label">Recommended model for {{ symbol|sym }}</div>
+  <div id="rec-body" class="empty-state">Backtesting {{ presets|length }} models and your saved ones on {{ symbol|sym }}… (the first time takes a few seconds)</div>
+</div>
+
+<div class="editor">
+  <div class="toolbar">
+    <button class="btn" id="run" title="Run and score the model">▶ Run</button>
+    <span class="group"><button id="undo" title="Undo (Ctrl+Z)">↶ Undo</button><button id="redo" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button></span>
+    <span class="group"><button id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button><button id="zoom-fit" title="Fit the model on screen">Fit</button><button id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button></span>
+    <select id="preset" aria-label="Load a ready-made model"><option value="">Load a ready-made model…</option>
+      {% for p in presets %}<option value="{{ loop.index0 }}">{{ p.name }}</option>{% endfor %}
+    </select>
+    <input id="save-name" placeholder="Name your model" maxlength="60" aria-label="Model name" style="width: 150px;">
+    <button class="btn btn-ghost" id="save">Save</button>
+    <button class="btn btn-ghost" id="clear" title="Remove every block">Clear</button>
+    <span class="status" id="status"></span>
+  </div>
+  <div class="palette" id="palette">
+    <input id="pal-search" placeholder="Find a block…" aria-label="Find a block">
+    {% for group, kind in [("Data", "price"), ("Direction", "dir"), ("Volatility", "vol"), ("Combine", "comb"), ("Output", "out")] %}
+    <div class="grp" data-grp><i class="k-{{ kind }}"></i>{{ {"Data": "Data", "Direction": "Direction · which way", "Volatility": "Volatility · how far", "Combine": "Combine & tune", "Output": "Output"}[group] }}</div>
+    {% for key, t in node_types.items() if t.group == group %}
+    <div class="blk" data-add="{{ key }}" title="{{ t.help }}" role="button" tabindex="0" data-search="{{ (t.label ~ ' ' ~ t.help ~ ' ' ~ t.level)|lower }}">
+      <span class="ico k-{{ kind }}">{{ t.label[0] }}</span><span class="nm">{{ t.label }}</span>{% if beginner %}<span class="lvl {{ t.level }}" title="{{ t.level }}">{{ t.level[0] }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    {% endfor %}
+    <div class="hint" style="margin-top: 10px;">Drag a block onto the canvas, or tap it to add.{% if beginner %} <span class="lvl Beginner">B</span> beginner · <span class="lvl Intermediate">I</span> intermediate · <span class="lvl Advanced">A</span> advanced.{% endif %}</div>
+  </div>
+  <div class="viewport" id="viewport">
+    <div class="sizer" id="sizer"><div class="canvas" id="canvas"><svg class="wires" id="wires"></svg></div></div>
+    <div class="empty-canvas" id="empty" hidden>Drag blocks here from the left<br><span class="hint">or load a ready-made model from the toolbar</span></div>
+  </div>
+  <div class="inspector" id="inspector"></div>
+</div>
+
+<div class="result">
+  <div class="card" style="margin: 0;">
+    <div class="label">Forecast for {{ symbol|sym }} — next {{ horizon }} sessions</div>
+    <div id="lab-chart"></div>
+    <div id="range-text" class="range-text"></div>
+    <div class="legend"><span><i style="border-color: var(--blue);"></i>expected path</span><span><i style="border-color: var(--amber);"></i>68% range (likely)</span><span><i style="border-color: #7a6331; border-top-style: dotted;"></i>90% range (very likely)</span><span><i style="border-color: #8a6d2c; border-top-style: solid;"></i>ranges it gave for past days</span><span><b style="color: var(--red);">●</b> price ended outside</span></div>
+    <div class="label" style="margin-top: 18px;">Track record on unseen data</div>
+    <div id="track-text" class="track-text"></div>
+    <div id="lab-track"></div>
+    <div class="legend"><span><i style="border-color: var(--amber);"></i>% of times the price ended inside the 68% range (target 68%)</span><span id="dir-legend"><i style="border-color: var(--blue);"></i>% of direction calls that were right (coin flip 50%)</span></div>
+  </div>
+  <div class="card" style="margin: 0;">
+    <div class="label">Where {{ symbol|sym }} ranks today, next 5 sessions</div>
+    <div id="updown" class="empty-state">Loading the score…</div>
+    <div class="label" style="margin-top: 18px;">How this model did on {{ symbol|sym }}</div>
+    <div id="score" class="empty-state">Run a model to score it.</div>
+    <div class="label" style="margin-top: 16px;">Your saved models</div>
+    <div class="saved" id="saved"><span class="hint">None yet. Saved models join the ranking for every stock.</span></div>
+  </div>
+</div>
+<p class="hint" style="margin-top: 14px;">Scores come from forecasts each model made using only the data it had at the time. The recommender chooses on an earlier period and shows a later, unseen one, so the number you see wasn't used to choose. "No change" is the baseline: a direction block only helps if its skill is above 0%. For learning and research; not investment advice.</p>
+<div id="toast" role="status"></div>
+
+<div class="card" style="margin-top: 16px;">
+  <div class="label">Model Zoo: published models side by side, and what they agree on</div>
+  <div style="display: flex; gap: 8px; margin-top: 6px;" id="zoo-h"></div>
+  <div id="zoo" class="empty-state">Loading…</div>
+</div>
+<script nonce="{{ csp_nonce }}">
+(() => {
+  const el = document.getElementById('zoo'), hs = document.getElementById('zoo-h');
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const pc = (v, d = 2) => v == null ? '—' : (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+  const IC = '<span class="term" title="Each day, how well a model\'s ranking of stocks matched what they did next. 0 = random; the best published daily models reach about 0.04-0.05.">rank IC</span>';
+  const FAM = { 'short-term': 'Short-term reversal', 'medium-term': 'Momentum & trend', volatility: 'Volatility', volume: 'Volume & liquidity', candle: 'Candle shape', gap: 'Overnight gap', market: 'Market state' };
+  async function show(h) {
+    let d;
+    try { d = await (await fetch('/api/lab/zoo?horizon=' + h)).json(); } catch (e) { el.textContent = 'Could not reach the server.'; return; }
+    if (d.error) { el.innerHTML = `${esc(d.error)} <span class="hint">Run on the laptop: python -m code.research.zoo --horizon ${h}</span>`; return; }
+    const ms = d.models.slice().sort((a, b) => b.locked.ic - a.locked.ic);
+    const best = [...d.models, ...d.blends].reduce((a, b) => b.valid.ic > a.valid.ic ? b : a);
+    const top = m => Object.entries(m.matches || {}).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
+    const famBar = f => Object.entries(f || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => FAM[k] || k).join(', ') || '—';
+    el.className = '';
+    el.innerHTML = `
+      <div class="ud-text">Each model predicts which stocks do better than the others over the next ${d.horizon} session${d.horizon > 1 ? 's' : ''}. All are trained the same way (refit every quarter, only on outcomes known by then), chosen on ${d.valid[0].slice(0, 4)}–2023 and checked on 2024+, which nothing was chosen on.</div>
+      <div class="label" style="margin-top: 14px;">The common pattern: what the fitted models lean on, on average</div>
+      <table class="ud-table">${d.common_pattern.map(p => `<tr><td style="width: 34%;">${esc(FAM[p.family] || p.family)}</td>
+        <td style="text-align: left;"><span style="display: inline-block; height: 10px; width: ${Math.round(p.share * 240)}px; background: var(--blue); border-radius: 2px; vertical-align: middle;"></span> ${(p.share * 100).toFixed(0)}%</td>
+        <td style="text-align: left;" class="hint">${esc(p.note)}</td></tr>`).join('')}</table>
+      <div class="label" style="margin-top: 14px;">Every model</div>
+      <table class="ud-table"><tr><th>Model</th><th>Source</th><th>${IC} 2021–23</th><th>${IC} 2024+</th><th>Top − bottom, 2024+</th><th>Leans on</th><th>Most like</th></tr>
+        ${ms.map(m => { const t = top(m); return `<tr><td>${esc(m.name)}</td><td class="hint" style="text-align: left;">${esc(m.paper)}</td><td>${m.valid.ic.toFixed(3)}</td>
+          <td style="color: var(${m.locked.ic > 0 ? '--green' : '--red'});">${m.locked.ic.toFixed(3)}</td><td>${pc(m.locked.spread)}</td>
+          <td style="text-align: left;">${m.kind === 'fitted' ? esc(famBar(m.families)) : esc(FAM[Object.keys(m.families)[0]] || '')}</td>
+          <td style="text-align: left;">${t ? `${esc(t[0])} (${t[1].toFixed(2)})` : '—'}</td></tr>`; }).join('')}</table>
+      <div class="label" style="margin-top: 14px;">Blends of all of them</div>
+      <table class="ud-table"><tr><th>Blend</th><th>${IC} 2021–23</th><th>${IC} 2024+</th><th>Top − bottom, 2024+</th></tr>
+        ${d.blends.map(b => `<tr><td>${esc(b.name)}</td><td>${b.valid.ic.toFixed(3)}</td><td style="color: var(${b.locked.ic > 0 ? '--green' : '--red'});">${b.locked.ic.toFixed(3)}</td><td>${pc(b.locked.spread)}</td></tr>`).join('')}</table>
+      <div class="ud-text">Best on the choosing period: <b>${esc(best.name)}</b> (${best.valid.ic.toFixed(3)}); on 2024+ it scored <b>${best.locked.ic.toFixed(3)}</b>. "Most like" is the classic factor whose daily picks overlap most with the model's (rank correlation, −1 to 1).</div>`;
+  }
+  ['1', '5', '20'].forEach(h => { const b = document.createElement('button'); b.className = 'linkbtn'; b.textContent = `${h}-session`; b.onclick = () => show(h); hs.appendChild(b); });
+  show('1');
+})();
+</script>
+
+<script src="/static/js/lightweight-charts-4.2.3.js" nonce="{{ csp_nonce }}" defer></script>
+<script nonce="{{ csp_nonce }}">
+(function () {
+  const SYMBOL = {{ symbol | tojson }};
+  const TYPES = {{ node_types | tojson }};
+  const PRESETS = {{ presets | tojson }};
+  const BEGINNER = {{ 'true' if beginner else 'false' }};
+  const HORIZON = {{ horizon }};
+  const W = 190, PORT_Y0 = 30, PORT_DY = 22, CW = 1400, CH = 800;
+  const KIND_CLASS = { Data: 'price', Direction: 'dir', Volatility: 'vol', Combine: 'comb', Output: 'out' };
+  const KIND_WORD = { price: 'prices', dir: 'a direction', vol: 'a volatility', forecast: 'a forecast' };
+  const PORT_WORD = { price: 'price', dir: 'direction', vol: 'volatility' };
+  const WIRE_COLOR = { price: '#8a8a8a', dir: '#4184f3', vol: '#d4a03d' };
+  const TIPS = {
+    coverage68: 'Share of times the real price ended inside the 68% range. Close to 68% means the range is honest; much lower means over-confident, much higher means too wide.',
+    coverage90: 'The same for the wider 90% range. Close to 90% is what you want.',
+    skill: 'How much smaller the forecast error was than just assuming "no change". Above 0% means the direction part helped; below 0% means it hurt.',
+    direction: 'How often the predicted direction (up or down) was right. 50% is a coin flip.',
+    interval: 'One number for range quality: the width of the range plus a penalty each time the price lands outside it. Lower is better. Used to rank models.',
+    n: 'How many 5-day forecasts were checked against what actually happened.',
+  };
+  const $ = id => document.getElementById(id);
+  const canvas = $('canvas'), wires = $('wires'), viewport = $('viewport'), sizer = $('sizer');
+  const pct = v => v == null ? '—' : (v * 100).toFixed(0) + '%';
+  const signed = v => (v > 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+  const inr = v => '₹' + Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  let graph = { nodes: [], edges: [] }, selected = null, selWire = null, seq = 1, chart = null, trackChart = null, runTimer = null, zoom = 1, lastScore = null;
+  const past = [], future = [];
+
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._t); t._t = setTimeout(() => t.style.display = 'none', 3000); }
+  function status(msg, err) { const s = $('status'); s.textContent = msg; s.className = 'status' + (err ? ' err' : ''); }
+  const clone = g => JSON.parse(JSON.stringify(g));
+  const typeOf = n => TYPES[n.type];
+  const kindCls = n => KIND_CLASS[typeOf(n).group];
+  const nodeH = n => Math.max(64, PORT_Y0 + 10 + (typeOf(n).inputs.length - 1) * PORT_DY + 18);
+  const byId = id => graph.nodes.find(n => n.id === id);
+
+  // ---- every change can be undone ----
+  function commit() { past.push(JSON.stringify(graph)); if (past.length > 80) past.shift(); future.length = 0; syncUndo(); }
+  function syncUndo() { $('undo').disabled = !past.length; $('redo').disabled = !future.length; }
+  function undo() { if (!past.length) return; future.push(JSON.stringify(graph)); graph = JSON.parse(past.pop()); selected = selWire = null; render(); schedule(); syncUndo(); }
+  function redo() { if (!future.length) return; past.push(JSON.stringify(graph)); graph = JSON.parse(future.pop()); selected = selWire = null; render(); schedule(); syncUndo(); }
+
+  // ---- edges know which input slot they use; ready-made models don't say, so assign in order ----
+  function slots() {
+    const used = {};
+    graph.edges = graph.edges.filter(e => byId(e.from) && byId(e.to));
+    graph.edges.forEach(e => {
+      const t = byId(e.to), src = byId(e.from), kinds = typeOf(t).inputs, k = typeOf(src).kind;
+      used[e.to] = used[e.to] || [];
+      const s = (e.slot != null && kinds[e.slot] === k && !used[e.to].includes(e.slot)) ? e.slot : kinds.findIndex((x, i) => x === k && !used[e.to].includes(i));
+      e.slot = s < 0 ? 0 : s; used[e.to].push(e.slot);
+    });
+  }
+  const inPos = (n, slot) => ({ x: n.x, y: n.y + PORT_Y0 + slot * PORT_DY });
+  const outPos = n => ({ x: n.x + W, y: n.y + nodeH(n) / 2 });
+  const curve = (a, b) => { const dx = Math.max(50, Math.abs(b.x - a.x) / 2); return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`; };
+  const summary = n => Object.keys(typeOf(n).params).map(k => `${k.replace('_', ' ')} ${(n.params || {})[k] ?? typeOf(n).params[k]}`).join(' · ');
+
+  // What a block still needs, in words, so beginners see it on the canvas.
+  function needs(n) {
+    const t = typeOf(n), have = graph.edges.filter(e => e.to === n.id).map(e => typeOf(byId(e.from)).kind);
+    if (n.type === 'forecast') {
+      const miss = ['dir', 'vol'].filter(k => !have.includes(k));
+      return miss.length ? 'needs ' + miss.map(k => KIND_WORD[k]).join(' and ') + ' input' : '';
+    }
+    if (n.type === 'blend' && have.filter(k => k === 'dir').length < 2) return 'needs two direction inputs';
+    if (n.type === 'vol_gate' && (!have.includes('dir') || !have.includes('vol'))) return 'needs a direction and a volatility input';
+    if (t.inputs.length && !have.length) return 'needs ' + KIND_WORD[t.inputs[0]] + ' input';
+    if (!graph.edges.some(e => e.from === n.id)) return 'output not connected yet';
+    return '';
+  }
+
+  function render() {
+    slots();
+    canvas.querySelectorAll('.node, .wire-x').forEach(el => el.remove());
+    graph.nodes.forEach(n => {
+      const t = typeOf(n), el = document.createElement('div'), need = needs(n);
+      el.className = `node k-${kindCls(n)}-n` + (selected === n.id ? ' sel' : '') + (need.startsWith('needs') ? ' warn' : '');
+      el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; el.style.minHeight = nodeH(n) + 'px';
+      el.dataset.id = n.id;
+      el.innerHTML = `<div class="hd"><span class="ico k-${kindCls(n)}">${esc(t.label[0])}</span><span>${esc(t.label)}</span></div><div class="sub">${esc(summary(n))}</div>${need && BEGINNER ? `<div class="need">${esc(need)}</div>` : ''}<button class="x" title="Delete block (Del)" aria-label="Delete ${esc(t.label)}">×</button>`;
+      t.inputs.forEach((kind, i) => {
+        const p = document.createElement('div');
+        p.className = `port in t-${kind}` + (graph.edges.some(e => e.to === n.id && e.slot === i) ? ' filled' : '');
+        p.style.top = (PORT_Y0 + i * PORT_DY - 7) + 'px';
+        p.dataset.node = n.id; p.dataset.slot = i; p.dataset.kind = kind;
+        p.title = `${PORT_WORD[kind]} input`;
+        if (t.inputs.length > 1) p.innerHTML = `<span class="tip">${PORT_WORD[kind]}</span>`;
+        el.appendChild(p);
+      });
+      if (t.kind !== 'forecast') {
+        const p = document.createElement('div');
+        p.className = `port out t-${t.kind}` + (graph.edges.some(e => e.from === n.id) ? ' filled' : '');
+        p.style.top = (nodeH(n) / 2 - 7) + 'px'; p.dataset.out = n.id; p.dataset.kind = t.kind;
+        p.title = `${PORT_WORD[t.kind]} output: drag to connect`;
+        el.appendChild(p);
+      }
+      canvas.appendChild(el);
+    });
+    $('empty').hidden = graph.nodes.length > 0;
+    drawWires();
+    inspector();
+    guide();
+  }
+
+  function drawWires(temp) {
+    wires.innerHTML = '';
+    canvas.querySelectorAll('.wire-x').forEach(el => el.remove());
+    const svg = (tag, attrs) => { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+    graph.edges.forEach((e, i) => {
+      const a = byId(e.from), b = byId(e.to), p1 = outPos(a), p2 = inPos(b, e.slot || 0), d = curve(p1, p2);
+      wires.appendChild(svg('path', { d, class: 'w' + (selWire === i ? ' sel' : ''), stroke: WIRE_COLOR[typeOf(a).kind] || '#777' }));
+      const hit = svg('path', { d, class: 'hit' }); hit.dataset.edge = i; hit.appendChild(svg('title', {})).textContent = 'Click to select, then × to remove'; wires.appendChild(hit);
+      if (selWire === i) {
+        const x = document.createElement('button');
+        x.className = 'wire-x'; x.textContent = '×'; x.title = 'Remove this connection'; x.setAttribute('aria-label', 'Remove this connection');
+        x.style.left = (p1.x + p2.x) / 2 + 'px'; x.style.top = (p1.y + p2.y) / 2 + 'px';
+        x.addEventListener('pointerdown', ev => ev.stopPropagation());
+        x.addEventListener('click', ev => { ev.stopPropagation(); removeWire(i); });
+        canvas.appendChild(x);
+      }
+    });
+    if (temp) wires.appendChild(svg('path', { d: curve(temp.a, temp.b), class: 'temp' }));
+  }
+
+  // ---- side panel: the selected block's settings and lesson, or the whole model in words ----
+  function inspector() {
+    const box = $('inspector'), n = byId(selected);
+    if (!n) {
+      box.innerHTML = `<h4>This model</h4><div class="explain">${explain()}</div>
+        <div class="legend-t"><span><i style="border-color: var(--t-price);"></i>price</span><span><i style="border-color: var(--t-dir);"></i>direction</span><span><i style="border-color: var(--t-vol);"></i>volatility</span></div>
+        <div class="hint" style="margin-top: 14px;">Connect by dragging from a dot to a dot of the same colour; the dots you can connect to light up green. Click a block to change its settings and learn what it does. Click a wire, then ×, to remove it. <span class="kbd">Del</span> deletes what's selected, <span class="kbd">Ctrl</span>+<span class="kbd">Z</span> undoes.</div>`;
+      return;
+    }
+    const t = typeOf(n);
+    box.innerHTML = `<h4><span class="ico k-${kindCls(n)}">${esc(t.label[0])}</span>${esc(t.label)} <span class="lvl ${t.level}">${t.level}</span></h4><div class="help">${esc(t.help)}</div><div class="learn">${esc(t.learn)}</div>`;
+    Object.entries(t.params).forEach(([k, def]) => {
+      const l = document.createElement('label'); l.textContent = `${k.replace('_', ' ')} (default ${def})`;
+      const inp = document.createElement('input'); inp.type = 'number'; inp.step = def < 1 ? '0.01' : '1';
+      inp.value = (n.params || {})[k] ?? def;
+      inp.addEventListener('change', () => { const v = parseFloat(inp.value); if (isNaN(v)) return; commit(); n.params = { ...(n.params || {}), [k]: v }; render(); schedule(); });
+      box.append(l, inp);
+    });
+    const row = document.createElement('div'); row.className = 'row-btns';
+    if (Object.keys(t.params).length) {
+      const reset = document.createElement('button'); reset.className = 'btn-xs'; reset.textContent = 'Reset to defaults';
+      reset.addEventListener('click', () => { commit(); n.params = { ...t.params }; render(); schedule(); });
+      row.append(reset);
+    }
+    const del = document.createElement('button'); del.className = 'btn-xs del'; del.textContent = 'Delete block';
+    del.addEventListener('click', () => removeNode(n.id));
+    row.append(del);
+    box.append(row);
+  }
+
+  function explain() {
+    if (!graph.nodes.length) return 'Empty. Drag a <b style="color: var(--t-dir)">direction</b> block, a <b style="color: var(--t-vol)">volatility</b> block and a <b style="color: var(--t-out)">Forecast</b> block onto the canvas. Price is added and connected for you.';
+    const out = graph.nodes.find(n => n.type === 'forecast');
+    if (!out) return 'Add a <b style="color: var(--t-out)">Forecast</b> block: it turns the direction and volatility into a 5-day prediction.';
+    const into = kind => graph.edges.filter(e => e.to === out.id && typeOf(byId(e.from)).kind === kind).map(e => byId(e.from))[0];
+    const describe = (n, depth) => {
+      if (!n || depth > 6) return '…';
+      const t = typeOf(n), p = summary(n), name = `<b>${esc(t.label)}</b>${p ? ` (${esc(p)})` : ''}`;
+      const ins = graph.edges.filter(e => e.to === n.id).map(e => byId(e.from)).filter(x => x.type !== 'price');
+      return ins.length ? `${name} of ${ins.map(x => describe(x, depth + 1)).join(' and ')}` : name;
+    };
+    const d = into('dir'), v = into('vol'), none = '<span style="color: var(--red)">nothing connected yet</span>';
+    return `<b>Which way:</b> ${d ? describe(d, 0) : none}.<br><b>How far:</b> ${v ? describe(v, 0) : none}.<br><b>Output:</b> a ${HORIZON}-session forecast with 68% and 90% ranges.`;
+  }
+
+  // ---- beginner checklist ----
+  function guide() {
+    const ol = $('guide-steps'); if (!ol) return;
+    const has = g => graph.nodes.some(n => typeOf(n).group === g);
+    const out = graph.nodes.find(n => n.type === 'forecast');
+    const priceFeeds = graph.edges.filter(e => byId(e.from) && byId(e.from).type === 'price').length >= 2;
+    const steps = [
+      ['Add a direction block', has('Direction')],
+      ['Add a volatility block', has('Volatility')],
+      ['Connect Price into both', priceFeeds],
+      ['Connect both into Forecast', !!out && !needs(out)],
+      ['Read the score below', !!lastScore],
+    ];
+    const next = steps.findIndex(s => !s[1]);
+    ol.innerHTML = steps.map((s, i) => `<li class="${s[1] ? 'done' : i === next ? 'next' : ''}"><span class="tick">${s[1] ? '✓' : i + 1}</span>${s[0]}</li>`).join('');
+  }
+
+  // ---- interaction: move blocks, draw wires either way, select and delete ----
+  const at = ev => { const r = canvas.getBoundingClientRect(); return { x: (ev.clientX - r.left) / zoom, y: (ev.clientY - r.top) / zoom }; };
+  let drag = null;
+
+  function startConnect(port) {
+    const fromOut = port.classList.contains('out'), kind = port.dataset.kind, self = fromOut ? port.dataset.out : port.dataset.node;
+    canvas.classList.add('connecting');
+    canvas.querySelectorAll(fromOut ? '.port.in' : '.port.out').forEach(p => {
+      if (p.dataset.kind === kind && (fromOut ? p.dataset.node : p.dataset.out) !== self) p.classList.add('ok');
+    });
+    return { connect: true, fromOut, id: self, kind, slot: fromOut ? null : +port.dataset.slot };
+  }
+  function endConnect() { canvas.classList.remove('connecting'); canvas.querySelectorAll('.port').forEach(p => p.classList.remove('ok', 'hot')); }
+
+  canvas.addEventListener('pointerdown', ev => {
+    if (ev.target.closest('.x')) return;
+    const port = ev.target.closest('.port'), nodeEl = ev.target.closest('.node');
+    if (port) { drag = startConnect(port); ev.preventDefault(); canvas.setPointerCapture(ev.pointerId); return; }
+    if (nodeEl) {
+      const n = byId(nodeEl.dataset.id), p = at(ev);
+      drag = { node: n, dx: p.x - n.x, dy: p.y - n.y, moved: false, before: JSON.stringify(graph) };
+      if (selected !== n.id || selWire != null) { selected = n.id; selWire = null; render(); }
+      canvas.setPointerCapture(ev.pointerId); ev.preventDefault();
+      return;
+    }
+    if (selected || selWire != null) { selected = null; selWire = null; render(); }
+  });
+  canvas.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    const p = at(ev);
+    if (drag.node) {
+      drag.node.x = Math.round(Math.max(0, Math.min(CW - W, p.x - drag.dx)));
+      drag.node.y = Math.round(Math.max(0, Math.min(CH - 70, p.y - drag.dy)));
+      const el = canvas.querySelector(`.node[data-id="${drag.node.id}"]`);
+      el.style.left = drag.node.x + 'px'; el.style.top = drag.node.y + 'px'; drag.moved = true;
+      drawWires();
+    } else if (drag.connect) {
+      const n = byId(drag.id), anchor = drag.fromOut ? outPos(n) : inPos(n, drag.slot);
+      drawWires(drag.fromOut ? { a: anchor, b: p } : { a: p, b: anchor });
+      canvas.querySelectorAll('.port.hot').forEach(x => x.classList.remove('hot'));
+      const under = document.elementFromPoint(ev.clientX, ev.clientY), target = under && under.closest('.port.ok');
+      if (target) target.classList.add('hot');
+    }
+  });
+  canvas.addEventListener('pointerup', ev => {
+    if (drag && drag.connect) {
+      const under = document.elementFromPoint(ev.clientX, ev.clientY), port = under && under.closest('.port');
+      endConnect();
+      if (port) {
+        if (drag.fromOut && port.classList.contains('in')) connect(drag.id, port.dataset.node, +port.dataset.slot, port.dataset.kind);
+        else if (!drag.fromOut && port.classList.contains('out')) connect(port.dataset.out, drag.id, drag.slot, drag.kind);
+        else if (port.dataset.out !== drag.id && port.dataset.node !== drag.id) toast('Connect a dot on the right side of one block to a dot on the left side of another.');
+      }
+      drawWires();
+    } else if (drag && drag.node && drag.moved) {
+      past.push(drag.before); future.length = 0; syncUndo();
+    }
+    drag = null;
+  });
+  canvas.addEventListener('click', ev => {
+    const x = ev.target.closest('.node .x');
+    if (x) { ev.stopPropagation(); removeNode(x.closest('.node').dataset.id); }
+  });
+  wires.addEventListener('pointerdown', ev => {
+    const i = ev.target.dataset && ev.target.dataset.edge;
+    if (i == null) return;
+    ev.stopPropagation();
+    selected = null; selWire = +i; render();
+  });
+
+  function connect(from, to, slot, kind) {
+    const src = byId(from), dst = byId(to);
+    if (!src || !dst || from === to) return;
+    const sk = typeOf(src).kind;
+    if (sk !== kind) { toast(`${typeOf(src).label} gives ${KIND_WORD[sk]}; that dot needs ${KIND_WORD[kind]}. Match the colours.`); return; }
+    commit();
+    graph.edges = graph.edges.filter(e => !(e.to === to && e.slot === slot));
+    graph.edges.push({ from, to, slot });
+    render(); schedule();
+  }
+  function removeWire(i) { commit(); graph.edges.splice(i, 1); selWire = null; render(); schedule(); toast('Connection removed · Ctrl+Z to undo'); }
+  function removeNode(id) {
+    const n = byId(id); if (!n) return;
+    commit();
+    graph.nodes = graph.nodes.filter(x => x.id !== id); graph.edges = graph.edges.filter(e => e.from !== id && e.to !== id);
+    if (selected === id) selected = null; selWire = null;
+    render(); schedule(); toast(`${typeOf(n).label} deleted · Ctrl+Z to undo`);
+  }
+
+  document.addEventListener('keydown', ev => {
+    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && (selected || selWire != null)) { ev.preventDefault(); selWire != null ? removeWire(selWire) : removeNode(selected); }
+    else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ev.shiftKey ? redo() : undo(); }
+    else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'y') { ev.preventDefault(); redo(); }
+    else if (ev.key === 'Escape' && (selected || selWire != null)) { selected = null; selWire = null; render(); }
+  });
+
+  // ---- adding blocks: tap to place in a free spot, or drag onto the canvas ----
+  function freeSpot() {
+    const free = (x, y) => !graph.nodes.some(m => Math.abs(m.x - x) < W + 10 && Math.abs(m.y - y) < 80);
+    for (const x of [230, 440, 650, 860, 1070, 20]) for (let y = 30; y < CH - 80; y += 95) if (free(x, y)) return { x, y };
+    return { x: 40, y: 40 };
+  }
+  function addBlock(type, pos) {
+    const t = TYPES[type];
+    if (type === 'forecast' && graph.nodes.some(n => n.type === 'forecast')) { toast('A model has one Forecast block.'); return; }
+    if (type === 'price' && graph.nodes.some(n => n.type === 'price')) { toast('One Price block is enough: connect it to as many blocks as you like.'); return; }
+    commit();
+    const n = { id: 'n' + Date.now().toString(36) + (seq++), type, params: { ...t.params }, ...(pos || freeSpot()) };
+    graph.nodes.push(n);
+    // Wiring a beginner would do anyway: price into models, and a model into an empty Forecast slot.
+    const auto = [];
+    if (t.inputs[0] === 'price') {
+      let p = graph.nodes.find(x => x.type === 'price');
+      if (!p) { p = { id: 'price', type: 'price', params: {}, x: 20, y: Math.max(20, Math.min(n.y, CH - 100)) }; if (Math.abs(p.x - n.x) < W) n.x = 230; graph.nodes.push(p); auto.push('added Price'); }
+      graph.edges.push({ from: p.id, to: n.id, slot: 0 }); auto.push('connected Price');
+    }
+    const out = graph.nodes.find(x => x.type === 'forecast');
+    if (out && out.id !== n.id && ['Direction', 'Volatility'].includes(t.group)) {
+      const slot = TYPES.forecast.inputs.indexOf(t.kind);
+      if (!graph.edges.some(e => e.to === out.id && e.slot === slot)) { graph.edges.push({ from: n.id, to: out.id, slot }); auto.push('connected it to Forecast'); }
+    }
+    if (type === 'forecast') {
+      ['dir', 'vol'].forEach((k, slot) => {
+        const src = graph.nodes.find(x => typeOf(x).kind === k && x.id !== n.id && !graph.edges.some(e => e.from === x.id));
+        if (src) { graph.edges.push({ from: src.id, to: n.id, slot }); auto.push(`connected ${typeOf(src).label}`); }
+      });
+    }
+    selected = n.id; selWire = null;
+    render(); schedule();
+    toast(auto.length ? `${t.label} added: ${auto.join(', ')}. Drag wires to change.` : `${t.label} added.`);
+  }
+
+  let ghost = null;
+  $('palette').addEventListener('pointerdown', ev => {
+    const b = ev.target.closest('.blk'); if (!b) return;
+    ev.preventDefault();
+    const start = { x: ev.clientX, y: ev.clientY };
+    let dragging = false;
+    const inside = e => { const r = viewport.getBoundingClientRect(); return e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom; };
+    const move = e => {
+      if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) {
+        dragging = true; ghost = b.cloneNode(true); ghost.classList.add('ghost'); ghost.style.width = b.offsetWidth + 'px'; document.body.appendChild(ghost);
+      }
+      if (dragging) { ghost.style.left = (e.clientX - 20) + 'px'; ghost.style.top = (e.clientY - 15) + 'px'; viewport.classList.toggle('drop', inside(e)); }
+    };
+    const up = e => {
+      document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up);
+      viewport.classList.remove('drop');
+      if (ghost) { ghost.remove(); ghost = null; }
+      if (!dragging) { addBlock(b.dataset.add); return; }
+      if (inside(e)) { const p = at(e); addBlock(b.dataset.add, { x: Math.round(Math.max(0, Math.min(CW - W, p.x - 40))), y: Math.round(Math.max(0, Math.min(CH - 70, p.y - 15))) }); }
+    };
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
+  });
+  $('palette').addEventListener('keydown', ev => { const b = ev.target.closest('.blk'); if (b && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); addBlock(b.dataset.add); } });
+  $('pal-search').addEventListener('input', ev => {
+    const q = ev.target.value.trim().toLowerCase();
+    $('palette').querySelectorAll('.blk').forEach(b => { b.hidden = !!q && !b.dataset.search.includes(q); });
+    $('palette').querySelectorAll('[data-grp]').forEach(g => {
+      let el = g.nextElementSibling, any = false;
+      while (el && el.classList.contains('blk')) { if (!el.hidden) any = true; el = el.nextElementSibling; }
+      g.hidden = !any;
+    });
+  });
+
+  // ---- zoom ----
+  function setZoom(z) {
+    zoom = Math.round(Math.min(1.5, Math.max(0.4, z)) * 100) / 100;
+    canvas.style.transform = `scale(${zoom})`;
+    sizer.style.width = CW * zoom + 'px'; sizer.style.height = CH * zoom + 'px';
+  }
+  function fit() {
+    if (!graph.nodes.length) { setZoom(1); return; }
+    const w = Math.max(...graph.nodes.map(n => n.x)) + W + 40, h = Math.max(...graph.nodes.map(n => n.y)) + 120;
+    setZoom(Math.min(1, (viewport.clientWidth - 20) / w, (viewport.clientHeight - 20) / h));
+    viewport.scrollTo(0, 0);
+  }
+  $('zoom-in').addEventListener('click', () => setZoom(zoom + 0.1));
+  $('zoom-out').addEventListener('click', () => setZoom(zoom - 0.1));
+  $('zoom-fit').addEventListener('click', fit);
+  $('undo').addEventListener('click', undo); $('redo').addEventListener('click', redo);
+
+  // ---- load / run / save ----
+  function load(g, label) { if (graph.nodes.length) commit(); graph = clone(g); selected = selWire = null; render(); fit(); run(); if (label) status('Loaded: ' + label); }
+  $('preset').addEventListener('change', ev => { const v = ev.target.value; if (v !== '') load(PRESETS[+v].graph, PRESETS[+v].name); ev.target.value = ''; });
+  $('clear').addEventListener('click', () => { if (!graph.nodes.length) return; commit(); graph = { nodes: [], edges: [] }; selected = selWire = null; lastScore = null; render(); status('Cleared · Ctrl+Z to undo'); });
+  $('run').addEventListener('click', () => run());
+  const schedule = () => { clearTimeout(runTimer); runTimer = setTimeout(run, 700); };
+  if ($('starter')) $('starter').addEventListener('click', () => load(PRESETS[0].graph, 'Starter: ' + PRESETS[0].name));
+  if ($('hide-guide')) $('hide-guide').addEventListener('click', () => $('guide').remove());
+
+  async function run() {
+    clearTimeout(runTimer);
+    const out = graph.nodes.find(n => n.type === 'forecast');
+    if (!out) { status(graph.nodes.length ? 'Add a Forecast block to run the model.' : 'Add blocks to build a model.'); return; }
+    const missing = needs(out);
+    if (missing && missing.startsWith('needs')) { status('Forecast ' + missing + '.'); return; }
+    status('Running…');
+    try {
+      const d = await (await fetch('/api/lab/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: SYMBOL, graph }) })).json();
+      if (d.error) { status(d.error, true); return; }
+      lastScore = d.report;
+      status('Scored on ' + (d.report_span || 'recent data'));
+      drawChart(d); drawScore(d); guide();
+    } catch (e) { status('Could not reach the server.', true); }
+  }
+
+  const tip = k => ` <span class="q" title="${esc(TIPS[k])}">?</span>`;
+  function metricBlock(m, span, layout) {
+    if (!m) return '<div class="empty-state">Not enough history to score.</div>';
+    return `<div class="metrics ${layout || 'two'}">
+      <div><div class="k">68% range caught${tip('coverage68')}</div><div class="v">${pct(m.coverage68)}</div><div class="s">target 68%</div></div>
+      <div><div class="k">90% range caught${tip('coverage90')}</div><div class="v">${pct(m.coverage90)}</div><div class="s">target 90%</div></div>
+      <div><div class="k">Skill vs no change${tip('skill')}</div><div class="v ${m.skill_vs_no_change > 0.005 ? 'up' : m.skill_vs_no_change < -0.005 ? 'down' : ''}">${signed(m.skill_vs_no_change)}</div><div class="s">above 0% = direction helps</div></div>
+      <div><div class="k">Direction right${tip('direction')}</div><div class="v">${pct(m.direction_hit)}</div><div class="s">${m.direction_hit == null ? 'makes no direction call' : 'coin flip = 50%'}</div></div>
+      <div><div class="k">Interval score${tip('interval')}</div><div class="v">${m.interval_score.toFixed(2)}</div><div class="s">lower is better</div></div>
+      <div><div class="k">Forecasts checked${tip('n')}</div><div class="v">${m.n}</div><div class="s">${esc(span)}</div></div></div>`;
+  }
+  function verdict(m) {
+    const c68 = Math.abs(m.coverage68 - 0.68) <= 0.05, c90 = Math.abs(m.coverage90 - 0.90) <= 0.04;
+    const calib = c68 && c90 ? 'Its ranges are honest: the price landed inside them about as often as promised.'
+      : m.coverage68 < 0.63 ? 'Its ranges are too narrow: the price escaped them more often than promised. Try adding Conformal calibration.'
+      : m.coverage68 > 0.73 ? 'Its ranges are wider than needed. Calibration or a faster volatility block would tighten them.'
+      : 'Its ranges are roughly right.';
+    const s = m.skill_vs_no_change;
+    const dir = m.direction_hit == null ? 'It makes no direction call, which is often the safest choice.'
+      : s > 0.005 ? `Its direction part helped: ${signed(s)} less error than "no change" on data it hadn't seen.`
+      : s < -0.005 ? `Its direction part hurt: ${signed(s)} versus "no change". Try a Shrink block, or a different direction block.`
+      : 'Its direction part made no real difference compared with "no change".';
+    const cls = c68 && s >= -0.005 ? 'good' : (s < -0.02 || m.coverage68 < 0.6) ? 'bad' : 'wait';
+    return `<div class="verdict ${cls}"><b>Verdict.</b> ${calib} ${dir}</div>`;
+  }
+  function drawScore(d) { $('score').className = ''; $('score').innerHTML = d.report ? metricBlock(d.report, d.report_span) + (BEGINNER ? verdict(d.report) : '') : '<div class="empty-state">Not enough history to score this model.</div>'; }
+
+  // Charts are drawn at their box's width; follow the box when the layout or window changes.
+  let chartView = null;
+  const follow = new ResizeObserver(() => {
+    if (chart) { chart.applyOptions({ width: $('lab-chart').clientWidth }); if (chartView) chart.timeScale().setVisibleLogicalRange(chartView); }
+    if (trackChart) { trackChart.applyOptions({ width: $('lab-track').clientWidth }); trackChart.timeScale().fitContent(); }
+  });
+  follow.observe($('lab-chart')); follow.observe($('lab-track'));
+
+  function drawChart(d) {
+    if (!window.LightweightCharts) return;
+    const el = $('lab-chart');
+    if (chart) chart.remove();
+    chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth, height: el.clientHeight,
+      layout: { background: { color: 'transparent' }, textColor: '#999', fontSize: 11 },
+      grid: { vertLines: { visible: false }, horzLines: { color: '#2a2a2a' } },
+      timeScale: { borderVisible: false }, rightPriceScale: { borderVisible: false }, handleScale: false,
+    });
+    const quiet = { lastValueVisible: false, priceLineVisible: false }, dashed = LightweightCharts.LineStyle.Dashed, dotted = LightweightCharts.LineStyle.Dotted;
+    const line = (pts, color, style, width, label) => chart.addLineSeries({ color, lineWidth: width, lineStyle: style, ...quiet, lastValueVisible: !!label, title: label || '' }).setData(pts.map(p => ({ time: p[0], value: p[1] })));
+    const p = d.track && d.track.past, first = d.candles[0][0];
+    if (p) {   // the 68% range the model gave for each recent day, five sessions before it
+      const keep = p.time.map((t, i) => i).filter(i => p.time[i] >= first);
+      line(keep.map(i => [p.time[i], p.hi68[i]]), '#8a6d2c', LightweightCharts.LineStyle.Solid, 1);
+      line(keep.map(i => [p.time[i], p.lo68[i]]), '#8a6d2c', LightweightCharts.LineStyle.Solid, 1);
+    }
+    const candles = chart.addCandlestickSeries({ upColor: '#4caf50', downColor: '#e5534b', borderVisible: false, wickUpColor: '#4caf50', wickDownColor: '#e5534b', ...quiet });
+    candles.setData(d.candles.map(c => ({ time: c[0], open: c[1], high: c[2], low: c[3], close: c[4] })));
+    if (p) candles.setMarkers(p.time.map((t, i) => ({ t, i })).filter(x => x.t >= first && !p.caught[x.i])
+      .map(x => ({ time: x.t, position: 'aboveBar', color: '#EF4444', shape: 'circle', size: 0.6 })));
+    const f = d.forecast;
+    if (f) { line(f.hi90, '#7a6331', dotted, 1); line(f.lo90, '#7a6331', dotted, 1); line(f.hi68, '#d4a03d', dashed, 2, 'likely high'); line(f.lo68, '#d4a03d', dashed, 2, 'likely low'); line(f.mid, '#4184f3', dashed, 2, 'expected'); }
+    chartView = { from: d.candles.length - 45, to: d.candles.length + 9 };
+    chart.timeScale().setVisibleLogicalRange(chartView);
+    const end = f && f.mid[f.mid.length - 1][0];
+    const day = end ? new Date(end * 1000).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+    $('range-text').innerHTML = f ? `By <b>${day}</b>: likely <b>${inr(f.end_lo68)} – ${inr(f.end_hi68)}</b> (±${((f.end_hi68 - f.end_lo68) / 2 / f.end_mid * 100).toFixed(1)}%), expected ${inr(f.end_mid)}. `
+      + `<span class="hint">Wide because this stock can honestly move that much in ${f.mid.length - 1} sessions; the track record below shows whether ranges this wide were right.</span>` : '';
+    drawTrack(d.track);
+  }
+
+  function drawTrack(t) {
+    const el = $('lab-track');
+    if (trackChart) { trackChart.remove(); trackChart = null; }
+    if (!t) { $('track-text').innerHTML = '<span class="hint">Not enough history for a track record yet.</span>'; return; }
+    const caught = t.hits68 / t.n, honest = Math.abs(caught - 0.68) <= 0.05;
+    const rangeWord = honest ? ['HONEST', 'up'] : caught < 0.68 ? ['TOO NARROW', 'down'] : ['WIDER THAN NEEDED', 'flat'];
+    let dirLine = 'It makes no direction call (expects no change), so there is nothing to score.';
+    if (t.dir_n) {
+      const hit = t.dir_hits / t.dir_n, band = 2 * Math.sqrt(0.25 / t.dir_n);   // 2 standard errors of a coin flip
+      const w = hit > 0.5 + band ? ['BETTER THAN A COIN FLIP', 'up'] : hit < 0.5 - band ? ['WORSE THAN A COIN FLIP', 'down'] : ['COIN-FLIP LEVEL', 'flat'];
+      dirLine = `Direction right <b>${t.dir_hits} of ${t.dir_n}</b> calls (${pct(hit)}): <span class="word ${w[1]}">${w[0]}</span>.`;
+    }
+    $('track-text').innerHTML = `Range caught the price <b>${t.hits68} of ${t.n}</b> times (${pct(caught)}, promised 68%): <span class="word ${rangeWord[1]}">${rangeWord[0]}</span>.`
+      + ` 90% range: ${t.hits90} of ${t.n} (${pct(t.hits90 / t.n)}).`
+      + ` Last ${t.past.caught.length} days: ${t.past.caught.filter(Boolean).length} of ${t.past.caught.length} inside.<br>${dirLine}`;
+    $('dir-legend').hidden = !t.dir_n;
+    const START = 20;   // fewer forecasts than this swing the running % wildly; start the line once it means something
+    if (!window.LightweightCharts) return;
+    trackChart = LightweightCharts.createChart(el, {
+      width: el.clientWidth, height: el.clientHeight,
+      layout: { background: { color: 'transparent' }, textColor: '#999', fontSize: 11 },
+      grid: { vertLines: { visible: false }, horzLines: { color: '#2a2a2a' } },
+      timeScale: { borderVisible: false }, rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
+      handleScale: false, handleScroll: false,
+    });
+    const fmt = { priceFormat: { type: 'custom', formatter: v => v.toFixed(0) + '%' }, priceLineVisible: false };
+    const cov = trackChart.addLineSeries({ color: '#d4a03d', lineWidth: 2, ...fmt });
+    cov.setData(t.time.map((x, i) => ({ time: x, value: t.coverage68[i] * 100 })).slice(START));
+    cov.createPriceLine({ price: 68, color: '#d4a03d', lineStyle: LightweightCharts.LineStyle.Dotted, lineWidth: 1, axisLabelVisible: false, title: 'target 68%' });
+    if (t.dir_n) {
+      const dir = trackChart.addLineSeries({ color: '#4184f3', lineWidth: 2, ...fmt });
+      dir.setData(t.time.map((x, i) => ({ time: x, value: t.direction[i] })).slice(START).filter(p => p.value != null).map(p => ({ time: p.time, value: p.value * 100 })));
+      dir.createPriceLine({ price: 50, color: '#4184f3', lineStyle: LightweightCharts.LineStyle.Dotted, lineWidth: 1, axisLabelVisible: false, title: 'coin flip' });
+    }
+    trackChart.timeScale().fitContent();
+  }
+
+  // ---- recommendation ----
+  async function updown() {
+    const el = $('updown');
+    let d;
+    try { d = await (await fetch('/api/lab/updown/' + encodeURIComponent(SYMBOL))).json(); }
+    catch (e) { el.textContent = 'Could not reach the server.'; return; }
+    if (d.error) { el.innerHTML = `${esc(d.error)} <span class="hint">Build it on the laptop: python -m code.research.updown (about 15 minutes).</span>`; return; }
+    const o = d.overall, s = d.stock, auc = '<span class="term" title="How well the score separates weeks that went up from weeks that went down. 0.50 = coin flip, 1.00 = perfect. Above ' + d.no_edge_auc + ' counts as an edge here.">AUC</span>';
+    const frac = (a, n) => `${a} of ${n}` + (n ? ` (${pct(a / n)})` : '');
+    const asof = new Date(d.asof).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    if (!s) {
+      el.className = ''; el.innerHTML = `<div class="ud-text">No score for this stock: it hasn't traded enough (₹5 crore a day) for long enough to have a track record. Across all stocks the score's ${auc} on unseen days is ${o.auc.toFixed(2)}.</div>`;
+      return;
+    }
+    const grades = Object.entries(d.by_grade).map(([g, r]) => `${g}: ${r.auc == null ? '—' : r.auc.toFixed(2)}`).join(' · ');
+    const r = d.ranking, years = Object.values(r.spread_by_year), yearsUp = years.filter(v => v > 0).length;
+    const ic = `<span class="term" title="Each day, how well the ranking lined up with what the stocks actually did over the next 5 sessions. 0 = no better than random; good quant signals are 0.02 to 0.05.">rank IC</span>`;
+    const tenth = s.rank == null ? null : Math.min(Math.floor(s.rank * 10), 9);
+    const word = tenth == null ? ['mid', 'NOT RANKED TODAY'] : tenth === 0 ? ['avoid', 'BOTTOM 10% — AVOID BUYING']
+               : tenth === 9 ? ['edge', 'TOP 10%'] : ['mid', `MIDDLE — TENTH ${tenth + 1} OF 10`];
+    const own = (x, label) => x.n ? `${label}: ${x.n} times, average 5-day move <b>${signed(x.avg_return)}</b>.` : `${label}: never.`;
+    el.className = '';
+    el.innerHTML = `
+      <div class="ud-top">
+        <span class="ud-p">${s.rank == null ? '—' : 'Ahead of ' + pct(s.rank)}</span>
+        <span class="ud-word ${word[0]}">${word[1]}</span>
+      </div>
+      <div class="ud-text">${s.rank == null ? `No rank on ${asof}: it didn't trade or wasn't liquid that day.` : `Of ${d.ranked_today.toLocaleString('en-IN')} liquid NSE stocks on ${asof}, ranked by how likely each is to rise over the next 5 sessions. ${tenth === 9 ? 'Top-tenth stocks beat the rest, but buying them alone made about the same as costs (0.25%).' : tenth === 0 ? 'Bottom-tenth stocks fell on average: this is where the ranking is most useful.' : ''}`}</div>
+      <div class="ud-text"><b>Every stock, every day, unseen data</b> (${esc(d.period)}): average 5-day move by tenth, from least likely up (1) to most likely (10). Before costs.</div>
+      <table class="ud-table dec"><tr>${r.deciles.map((_, i) => `<th>${i + 1}</th>`).join('')}</tr>
+        <tr>${r.deciles.map((v, i) => `<td class="${i === tenth ? 'here' : ''}" style="color: var(${v < 0 ? '--red' : '--green'});">${(v > 0 ? '+' : '') + (v * 100).toFixed(2)}%</td>`).join('')}</tr></table>
+      <div class="ud-text">Top tenth beat bottom tenth by <b>${signed(r.spread)}</b> per 5 sessions on average, and in <b>${yearsUp} of ${years.length}</b> years. ${ic} ${r.ic.toFixed(3)}, right more than wrong on ${pct(r.ic_days_positive)} of ${r.days.toLocaleString('en-IN')} days.</div>
+      <div class="ud-text"><b>On ${esc(SYMBOL.replace('.NS', ''))} itself</b> (${s.n.toLocaleString('en-IN')} unseen days). ${own(s.bottom, 'In the bottom tenth')} ${own(s.top, 'In the top tenth')}</div>
+      <details class="ud-more"><summary>Chance-up score and its record</summary>
+        <div class="ud-text">Chance up in 5 sessions: <b>${s.p == null ? '—' : pct(s.p)}</b>. On its own this can't time the market (${auc} ${o.auc.toFixed(2)} across all stocks; by market grade ${grades}). Its 60%+ calls mostly came from a few sell-off weeks in 2025.</div>
+        <table class="ud-table"><tr><th>It said</th><th>Times</th><th>Actually up</th><th>Avg 5-day move</th></tr>
+          ${s.buckets.map(b => `<tr><td>${pct(b.from)}–${pct(b.to)}</td><td>${b.n}</td><td>${pct(b.actual_up)}</td><td>${signed(b.avg_return)}</td></tr>`).join('')}</table>
+      </details>
+      <div class="hint" style="margin-top: 6px;">One model for all liquid NSE stocks, refitted monthly; every number here was scored before its outcome was known. Decision support only.</div>`;
+  }
+
+  async function recommend() {
+    try {
+      const d = await (await fetch('/api/lab/recommend/' + encodeURIComponent(SYMBOL))).json();
+      const body = $('rec-body');
+      if (d.error) { body.textContent = d.error; if (!graph.nodes.length) load(PRESETS[0].graph); return; }
+      const b = d.best, base = d.baseline, f = b.forecast;
+      body.className = '';
+      const beats = base && b.name !== base.name ? ` On the unseen period its interval score was ${b.report.interval_score.toFixed(2)} against ${base.report.interval_score.toFixed(2)} for the app's default ranges (lower is better).` : '';
+      const direction = b.report.skill_vs_no_change > 0.005 ? 'Its direction call reduced forecast error versus "no change" on unseen data.'
+        : 'No direction block beat "no change" here: the winner predicts how far the price may move, not which way.';
+      body.innerHTML = `<div class="rec"><div><div class="name">${esc(b.name)}</div><div class="why">Best of ${d.ranking.length} models on ${esc(SYMBOL.replace('.NS', ''))}, chosen on ${esc(b.select_span)} and scored here on ${esc(b.report_span)}, which the choice never saw. ${direction}${beats}</div></div><button class="btn btn-ghost" id="load-best">Open in canvas</button></div>
+        ${f ? `<div class="why" style="margin-top: 8px; color: var(--text);">Next ${f.mid.length - 1} sessions: likely ${inr(f.end_lo68)} – ${inr(f.end_hi68)} (68%), expected ${inr(f.end_mid)}.</div>` : ''}
+        ${metricBlock(b.report, 'unseen: ' + b.report_span, 'six')}
+        <details class="more"><summary>All ${d.ranking.length} models, ranked on ${esc(b.select_span)}, scored on ${esc(b.report_span)} ›</summary><div class="rank-wrap"><table class="rank">
+        <tr><th>Model</th><th class="num">Chosen-on score</th><th class="num">Unseen score</th><th class="num">68%</th><th class="num">90%</th><th class="num">Skill</th><th></th></tr>
+        ${d.ranking.map((r, i) => `<tr class="${i === 0 ? 'best' : ''}"><td>${i + 1}. ${esc(r.name)}</td><td class="num">${r.select.interval_score.toFixed(2)}</td><td class="num">${r.report.interval_score.toFixed(2)}</td><td class="num">${pct(r.report.coverage68)}</td><td class="num">${pct(r.report.coverage90)}</td><td class="num">${signed(r.report.skill_vs_no_change)}</td><td><button class="btn-xs" data-load="${i}">Open</button></td></tr>`).join('')}
+        </table></div></details>`;
+      $('load-best').addEventListener('click', () => load(b.graph, b.name));
+      body.querySelectorAll('[data-load]').forEach(el => el.addEventListener('click', () => load(d.ranking[+el.dataset.load].graph, d.ranking[+el.dataset.load].name)));
+      if (!graph.nodes.length) load(b.graph, b.name);
+    } catch (e) { $('rec-body').textContent = 'Could not load the recommendation.'; }
+  }
+
+  async function refreshSaved() {
+    const list = await (await fetch('/api/lab/models')).json(), box = $('saved');
+    if (!list.length) { box.innerHTML = '<span class="hint">None yet. Saved models join the ranking for every stock.</span>'; return; }
+    box.innerHTML = '';
+    list.forEach(m => {
+      const row = document.createElement('div'), name = document.createElement('span');
+      name.textContent = m.name;
+      const open = document.createElement('button'); open.className = 'btn-xs'; open.textContent = 'Open'; open.addEventListener('click', () => load(m.graph, m.name));
+      const del = document.createElement('button'); del.className = 'btn-xs'; del.textContent = 'Delete'; del.style.color = 'var(--red)';
+      del.addEventListener('click', async () => { if (!confirm(`Delete "${m.name}"?`)) return; await fetch(`/api/lab/models/${m.id}/delete`, { method: 'POST' }); refreshSaved(); toast('Deleted'); });
+      const btns = document.createElement('span'); btns.style.display = 'flex'; btns.style.gap = '6px'; btns.append(open, del);
+      row.append(name, btns); box.appendChild(row);
+    });
+  }
+  $('save').addEventListener('click', async () => {
+    const name = $('save-name').value.trim();
+    if (!name) { toast('Give the model a name first.'); $('save-name').focus(); return; }
+    const d = await (await fetch('/api/lab/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, graph }) })).json();
+    if (d.error) { status(d.error, true); return; }
+    $('save-name').value = ''; toast('Saved. It now competes in every stock\'s ranking.'); refreshSaved();
+  });
+
+  const goLab = t => { const s = String(t || '').trim().toUpperCase().replace(/\.NS$/, ''); if (s) location.href = '/lab?symbol=' + encodeURIComponent(s); };
+  $('lab-search').addEventListener('submit', ev => { ev.preventDefault(); goLab($('lab-ticker').value); });
+
+  window.addEventListener('load', () => {
+    if (typeof papaAttachTypeahead === 'function') papaAttachTypeahead('lab-ticker', 'lab-ticker-dd', goLab);
+    setZoom(1); render(); syncUndo(); recommend(); refreshSaved(); updown();
+  });
+})();
+</script>
+{% endblock %}

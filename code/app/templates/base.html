@@ -53,6 +53,9 @@
     .up { color: var(--green); } .down { color: var(--red); } .muted { color: var(--muted); }
     .live-badge { font-size: 12px; color: var(--green); margin-left: 8px; } .live-badge::before { content: "● "; }
     .live-pivot { display: block; font-size: 13px; margin-top: 2px; }
+    .live-signal { display: block; font-size: 13px; margin-top: 4px; color: var(--text); }
+    .live-signal .chip { margin-right: 6px; }
+    .live-signal[hidden], .live-pivot[hidden] { display: none; }
 
     /* ---- top bar ---- */
     nav {
@@ -67,21 +70,40 @@
     .nav-menu { display: contents; }
     .menu-toggle { display: none; }
     .nav-tabs { display: flex; align-items: center; overflow-x: auto; min-width: 0; scrollbar-width: none; }
-    .brand { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; margin-right: 18px; }
-    .quote { font-size: 13px; color: var(--muted); white-space: nowrap; margin-right: 20px; }
+    .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--text); white-space: nowrap; margin-right: 14px; letter-spacing: -.01em; }
+    .brand:hover { text-decoration: none; }
+    .brand .mark { display: inline-flex; width: 26px; height: 26px; border-radius: 7px; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--blue), #6c5ce7); }
+    .brand .mark .ic { width: 16px; height: 16px; stroke: #fff; }
+    .ic { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+    .mkt { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; margin-right: 14px; padding: 3px 10px 3px 8px; border: 1px solid var(--border-strong); border-radius: 999px; }
+    .mkt i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); }
+    .mkt.open { color: var(--green); border-color: rgba(76,175,80,.35); } .mkt.open i { background: var(--green); box-shadow: 0 0 0 3px rgba(76,175,80,.18); }
+    .mkt.pre { color: var(--amber); } .mkt.pre i { background: var(--amber); }
+    .mkt small { color: var(--muted-2); font-size: 11px; margin-left: 2px; }
+    @media (max-width: 1500px) { .mkt small { display: none; } .quote { margin-right: 10px; } }
+    .quote { font-size: 13px; color: var(--muted); white-space: nowrap; margin-right: 16px; }
     .quote b { color: var(--text); font-weight: 500; margin: 0 4px; }
     nav a.tab {
-      color: var(--muted); padding: 0 12px; height: var(--nav-height);
+      color: var(--muted); padding: 0 9px; height: var(--nav-height); gap: 7px;
       display: inline-flex; align-items: center; font-size: 14px; font-weight: 500;
       white-space: nowrap; border-bottom: 2px solid transparent;
     }
     nav a.tab:hover { color: var(--text); text-decoration: none; }
     nav a.tab.active { color: var(--text); border-bottom-color: var(--blue); }
+    nav a.tab.active .ic { stroke: var(--blue); }
+    .nav-tabs .sep { width: 1px; height: 20px; background: var(--border-strong); margin: 0 6px; }
+    .grp-label { display: none; }
+    .icon-link { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); margin-left: 12px; padding: 7px; border-radius: 6px; }
+    .icon-link .ic { width: 19px; height: 19px; }
+    .icon-link:hover, .icon-link.active { color: var(--text); background: var(--surface-2); text-decoration: none; }
+    .mobile-only { display: none; }
+    .halt-badge { margin-left: 12px; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #fff; background: var(--red); padding: 4px 8px; border-radius: 4px; }
+    .halt-badge:hover { text-decoration: none; filter: brightness(1.1); }
 
     .nav-search { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-left: 16px; flex-shrink: 0; }
     .nav-search input[type="text"] {
       background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-      font: inherit; font-size: 14px; padding: 7px 12px; border-radius: 4px; width: 210px; outline: none;
+      font: inherit; font-size: 14px; padding: 7px 12px; border-radius: 6px; width: 180px; outline: none;
     }
     .nav-search input[type="text"]::placeholder { color: var(--muted-2); }
     .nav-search input[type="text"]:focus { border-color: var(--blue); }
@@ -160,11 +182,8 @@
 
     @media (max-width: 900px) { .nav-search input[type="text"] { width: 150px; } .quote { display: none; } }
 
-    /* ============ phones ============ */
-    @media (max-width: 600px) {
-      body { font-size: 16px; }
-      main { padding: 14px 16px 40px; }
-      h1 { font-size: 19px; }
+    /* ============ tablets and phones: the nav folds into a menu ============ */
+    @media (max-width: 1180px) {
       nav { flex-wrap: wrap; align-items: stretch; padding: 0; }
       .nav-bar { display: flex; align-items: center; width: 100%; padding: 0 8px 0 16px; min-height: var(--nav-height); }
       .brand { margin-right: 12px; }
@@ -182,6 +201,24 @@
       .nav-search input[type="text"] { width: 100%; min-height: 44px; font-size: 16px; }
       .nav-search .btn-ghost { min-height: 44px; }
       .logout-link { display: block; padding: 10px 2px; margin: 0; font-size: 14px; }
+      nav a.tab .ic { width: 18px; height: 18px; }
+      .nav-tabs .sep { display: none; }
+      .grp-label { display: block; font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: .08em; margin: 14px 0 2px; }
+      .grp-label:first-child { margin-top: 6px; }
+      .icon-link { margin: 0; padding: 12px 2px; border-bottom: 1px solid var(--border); border-radius: 0; font-size: 16px; display: flex; }
+      .icon-link:hover, .icon-link.active { background: none; }
+      .mobile-only { display: inline; }
+      .halt-badge { display: inline-block; margin: 10px 0 0; }
+    }
+
+    /* ============ phones ============ */
+    @media (max-width: 600px) {
+      body { font-size: 16px; }
+      main { padding: 14px 16px 40px; }
+      h1 { font-size: 19px; }
+      .mkt { font-size: 0; gap: 0; padding: 6px; margin-right: 10px; }  /* just the coloured dot; the text is in its title */
+      .brand { margin-right: 10px; }
+      .quote { font-size: 12px; }
       .card { padding: 16px; }
       .btn { min-height: 44px; font-size: 15px; }
       input, select, textarea, button { font-size: 16px; }
@@ -190,22 +227,35 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body>
+  {% macro icon(name) -%}
+  <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{{ {
+    "today": '<path d="M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10"/>',
+    "screen": '<path d="M3.5 5h17l-6.5 7.5v5.5l-4 2v-7.5z"/>',
+    "pairs": '<path d="M5 8h14l-3.5-3.5M19 16H5l3.5 3.5"/>',
+    "stock": '<path d="M4 4v16h16M8 15l3.5-4 3 3L20 7.5"/>',
+    "paper": '<path d="M3.5 7.5h17v12h-17zM8 7.5V5h8v2.5M3.5 12.5h17"/>',
+    "lab": '<circle cx="5.5" cy="12" r="2.5"/><circle cx="18.5" cy="6" r="2.5"/><circle cx="18.5" cy="18" r="2.5"/><path d="M8 12h3.5l4.5-5M11.5 12l4.5 5"/>',
+    "settings": '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  }[name]|safe }}</svg>
+  {%- endmacro %}
+  {% macro tab(key, href, label, ic) %}<a href="{{ href }}" class="tab {{ 'active' if active_tab == key }}" {% if active_tab == key %}aria-current="page"{% endif %}>{{ icon(ic or key) }}<span>{{ label }}</span></a>{% endmacro %}
   <nav id="site-nav">
     <div class="nav-bar">
-      <span class="brand">Marketly</span>
-      {% if nav_nifty and nav_nifty.close %}<span class="quote">NIFTY 50<b data-live-px="^NSEI">{{ "{:,.2f}".format(nav_nifty.close) }}</b>{% if nav_nifty.chg_pct is defined and nav_nifty.chg_pct is not none %}<span data-live-chg="^NSEI" class="{{ 'up' if nav_nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nav_nifty.chg_pct) }}%</span>{% endif %}</span>{% endif %}
+      <a href="/" class="brand" aria-label="Marketly home"><span class="mark">{{ icon("stock") }}</span>Marketly</a>
+      {% if market_pill %}<span class="mkt {{ market_pill.cls }}" title="{{ market_pill.text }} · {{ market_pill.sub }}"><i></i>{{ market_pill.text }}<small>{{ market_pill.sub }}</small></span>{% endif %}
+      {% if nav_nifty and nav_nifty.close %}<span class="quote">NIFTY<b data-live-px="^NSEI">{{ "{:,.2f}".format(nav_nifty.close) }}</b>{% if nav_nifty.chg_pct is defined and nav_nifty.chg_pct is not none %}<span data-live-chg="^NSEI" class="{{ 'up' if nav_nifty.chg_pct > 0 else 'down' }}">{{ "%+.2f"|format(nav_nifty.chg_pct) }}%</span>{% endif %}</span>{% endif %}
       <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-menu">
         <span aria-hidden="true">&#9776;</span>
       </button>
     </div>
     <div class="nav-menu" id="nav-menu">
       <div class="nav-tabs">
-        <a href="/" class="tab {{ 'active' if active_tab == 'today' else '' }}">Today</a>
-        <a href="/screen" class="tab {{ 'active' if active_tab == 'screen' else '' }}">Screen</a>
-        <a href="/pairs" class="tab {{ 'active' if active_tab == 'pairs' else '' }}">Pairs</a>
-        <a href="/stock/RELIANCE.NS" class="tab {{ 'active' if active_tab == 'stock' else '' }}">Stock Room</a>
-        <a href="/predictions" class="tab {{ 'active' if active_tab == 'predictions' else '' }}">Paper Trading</a>
-        <a href="/broker" class="tab {{ 'active' if active_tab == 'broker' else '' }}">Broker</a>
+        <span class="grp-label">Market</span>
+        {{ tab("today", "/", "Today") }}{{ tab("screen", "/screen", "Screen") }}{{ tab("pairs", "/pairs", "Pairs") }}
+        <span class="sep" aria-hidden="true"></span><span class="grp-label">Trade</span>
+        {{ tab("stock", "/stock/RELIANCE.NS", "Stock Room") }}{{ tab("predictions", "/predictions", "Paper Trading", "paper") }}
+        <span class="sep" aria-hidden="true"></span><span class="grp-label">Research</span>
+        {{ tab("lab", "/lab", "Model Lab") }}
       </div>
       <form class="nav-search" data-ticker-form="nav-ticker-input">
         <div class="typeahead-wrap">
@@ -213,8 +263,9 @@
                  placeholder="Search any NSE stock&hellip;" aria-label="Search any NSE stock" />
           <div id="nav-ticker-dropdown" class="typeahead-dropdown" role="listbox" hidden></div>
         </div>
-        <button type="submit" class="btn-ghost">Go</button>
       </form>
+      {% if halted %}<a href="/settings#safety" class="halt-badge" title="Trading is halted: click to manage">HALTED</a>{% endif %}
+      <a href="/settings" class="icon-link {{ 'active' if active_tab == 'settings' }}" aria-label="Settings" title="Settings">{{ icon("settings") }}<span class="mobile-only">Settings</span></a>
       <a href="/logout" class="logout-link">Logout</a>
     </div>
   </nav>
@@ -241,7 +292,7 @@
       {% if stale %}
       <span>Data from <span class="ts">{{ generated_at|nicedate if generated_at else "unknown" }}</span> — tonight's update hasn't finished</span>
       {% else %}
-      <span>Prices as of <span class="ts">{{ data_asof | nicedate if data_asof else "—" }} close</span> &middot; updated <span class="ts">{{ generated_at | nicetime if generated_at else "—" }}</span></span>
+      <span>Setups from <span class="ts">{{ data_asof | nicedate if data_asof else "—" }} close</span> &middot; {% if market_open %}<span class="ts">live prices every 30 s</span> &middot; next update 6:30 pm{% else %}updated <span class="ts">{{ generated_at | nicetime if generated_at else "—" }}</span>{% endif %}</span>
       {% endif %}
     </div>
     {% if stale %}
@@ -278,7 +329,8 @@
     // Purely local typeahead: filters PAPA_TICKER_DIRECTORY (already in
     // memory) on every keystroke, renders at most 8 matches, no fetch(),
     // no datalist. Symbol-prefix matches rank above substring/name matches.
-    function papaAttachTypeahead(inputId, dropdownId) {
+    function papaAttachTypeahead(inputId, dropdownId, go) {
+      go = go || papaGoToTicker;  // where a picked stock opens; Stock Room unless the page says otherwise
       const input = document.getElementById(inputId);
       const dropdown = document.getElementById(dropdownId);
       if (!input || !dropdown) return;
@@ -328,9 +380,9 @@
 
       function select(m) {
         dropdown.hidden = true;
-        if (m.fallback) { papaGoToTicker(query); return; }
+        if (m.fallback) { go(query); return; }
         input.value = m.symbol;
-        papaGoToTicker(m.symbol);
+        go(m.symbol);
       }
 
       function filterNow() {

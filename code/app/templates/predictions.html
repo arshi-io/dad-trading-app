@@ -35,6 +35,21 @@
   .pp-chart-toggle { font-size: 13px; color: var(--muted); margin-top: 8px; }
   .pp-chart-toggle summary { display: inline-block; padding: 4px 0; }
   .pp-chart { height: 220px; margin-top: 6px; }
+  .steps { margin: 10px 0 6px; padding-left: 20px; font-size: 13px; color: var(--muted); }
+  .steps li { padding: 3px 0; }
+  .steps li b { color: var(--text); font-weight: 500; }
+  .steps li.now { color: var(--text); }
+  .steps li.done { text-decoration: line-through; opacity: .6; }
+  .steps li.bad b { color: var(--red); } .steps li.good b { color: var(--green); } .steps li.wait b { color: var(--amber); }
+  .pos .proj { margin-top: 3px; }
+  .outlook .ol-grid { grid-template-columns: repeat(4, 1fr); }
+  .outlook .ol-grid .v { font-size: 17px; }
+  .plan-list { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+  .plan-list .pl { display: flex; gap: 10px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; line-height: 1.45; }
+  .plan-list .pl .chip { flex-shrink: 0; min-width: 92px; text-align: center; }
+  @media (max-width: 600px) { .outlook .ol-grid { grid-template-columns: 1fr 1fr; } .plan-list .pl { flex-direction: column; gap: 4px; } }
+  .model-rec { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-left: 3px solid var(--blue); border-radius: 4px; font-size: 13px; color: var(--muted); }
+  .model-rec b { color: var(--text); font-weight: 600; }
   .trade { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
   .trade input { width: 84px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 7px 8px; border-radius: 4px; }
   .trade .cost { flex: 1 1 150px; font-size: 13px; color: var(--muted); }
@@ -66,13 +81,27 @@
 {% endblock %}
 {% block content %}
 {% macro rs(v) %}{{ "-" if v < 0 else "" }}₹{{ "{:,.2f}".format(v|abs) }}{% endmacro %}
+{% macro plan_block(t) %}
+      {% set v = position_views.get(t.id|string) %}
+      {% if v %}
+      <details class="pp-chart-toggle" data-pos-chart="{{ t.id }}" {{ "open" if not v.pending }}><summary>Chart &amp; plan ›</summary>
+        <div class="pp-chart" id="pos-chart-{{ t.id }}"></div>
+        <div class="proj" style="margin-top: 8px;">Amber cone: the app's default 68% range for the next 5 sessions. Blue: the recommended model's path and 68% range. Plan from the last close:</div>
+        <ol class="steps">
+          {% for st in v.steps %}<li class="{{ st.state }} {{ st.cls or '' }}"><b>{{ st.title }}.</b> {{ st.text }}</li>{% endfor %}
+        </ol>
+        {% for o in v.outlook %}<div class="proj">{{ o }}</div>{% endfor %}
+        <div class="model-rec" data-rec="{{ t.id }}" data-symbol="{{ t.ticker }}" data-qty="{{ t.qty }}" data-open="{{ 0 if v.pending else 1 }}" data-last="{{ v.last }}">Finding the best forecasting model for {{ t.ticker|sym }}…</div>
+      </details>
+      {% endif %}
+{% endmacro %}
 {% macro rs0(v) %}{{ "-" if v < 0 else "" }}₹{{ "{:,.0f}".format(v|abs) }}{% endmacro %}
 
 <h1>Paper trading</h1>
 
 <div class="card">
   <div class="funds">
-    <div><div class="label" style="margin:0;">Account</div><div class="v">₹10,00,000</div><div class="s">paper money</div></div>
+    <div><div class="label" style="margin:0;">Account</div><div class="v">₹{{ capital|inr }}</div><div class="s">paper money</div></div>
     <div><div class="label" style="margin:0;">Open P&amp;L</div><div class="v {{ 'up' if stats.open_pnl > 0 else 'down' if stats.open_pnl < 0 }}">{{ rs0(stats.open_pnl) }}</div><div class="s">{{ stats.open_trades }} open · {{ stats.pending_orders }} waiting</div></div>
     <div><div class="label" style="margin:0;">Booked P&amp;L</div><div class="v {{ 'up' if stats.total_pnl > 0 else 'down' if stats.total_pnl < 0 }}">{{ rs0(stats.total_pnl) }}</div><div class="s">{{ stats.closed_trades }} closed</div></div>
     <div><div class="label" style="margin:0;">Win rate</div><div class="v">{{ (stats.win_rate ~ "%") if stats.win_rate is not none else "—" }}</div>
@@ -87,13 +116,47 @@
 </div>
 
 {% if pending_trades or open_trades %}
+<div class="card outlook" id="outlook">
+  <div class="label">Portfolio forecast</div>
+  {% if outlook.n %}
+  <div class="funds ol-grid">
+    <div><div class="label" style="margin:0;">Open P&amp;L</div><div class="v {{ 'up' if outlook.pnl > 0 else 'down' if outlook.pnl < 0 }}" id="ol-pnl">{{ rs0(outlook.pnl) }}</div><div class="s">{{ outlook.n }} position{{ "s" if outlook.n != 1 }} · ₹{{ outlook.invested|inr }} invested</div></div>
+    {% if outlook.day_lo is defined %}
+    <div><div class="label" style="margin:0;"><span class="term" title="Two days in three, the next session's P&amp;L landed in this range when the last {{ outlook.days_used }} sessions of these stocks are replayed at today's quantities (historical simulation).">Next session</span></div><div class="v">{{ rs0(outlook.day_lo) }} to {{ rs0(outlook.day_hi) }}</div><div class="s">likely range (68%) · bad day {{ rs0(outlook.day_bad) }}</div></div>
+    <div><div class="label" style="margin:0;"><span class="term" title="The same replay over 5-session windows.">Next week</span></div><div class="v">{{ rs0(outlook.week_lo) }} to {{ rs0(outlook.week_hi) }}</div><div class="s">likely range (68%) · bad week {{ rs0(outlook.week_bad) }}</div></div>
+    {% endif %}
+    <div><div class="label" style="margin:0;"><span class="term" title="What you'd lose from the last close if every open position hit its stop.">If every stop hits</span></div><div class="v down">{{ rs0(-outlook.heat) }}</div><div class="s">{{ "%.1f"|format(outlook.heat_pct) }}% of the account</div></div>
+  </div>
+  <div class="proj" id="ol-models" style="margin-top: 10px;">Models' expected P&amp;L over the next 5 sessions: working it out…</div>
+  {% else %}
+  <div class="empty-state" style="padding: 6px 0 10px;">No open positions yet{% if pending_trades %}: {{ pending_trades|length }} order{{ "s" if pending_trades|length != 1 }} waiting to fill{% endif %}. The forecast appears once something is bought.</div>
+  {% endif %}
+
+  <div class="label" style="margin-top: 16px;">Plan for tomorrow</div>
+  {% if tomorrow or ideas %}
+  <div class="plan-list">
+    {% for r in tomorrow %}
+    <div class="pl"><span class="chip {{ r.cls }}">{{ r.action }}</span><div><b>{{ r.symbol|sym }}</b> · {{ r.text }}</div></div>
+    {% endfor %}
+    {% for p in ideas %}
+    <div class="pl"><span class="chip good">NEW BUY</span><div><b>{{ p.symbol|sym }}</b> · {{ "Buy above" if p.order == "STOP" else "Buy at" }} {{ rs(p.entry) }}, stop {{ rs(p.stop) }}, target {{ rs(p.target) }}, {{ p.qty }} shares{% if p.next_low %} · tomorrow likely {{ rs(p.next_low) }}–{{ rs(p.next_high) }}{% endif %}. {{ p.reason }}.</div></div>
+    {% endfor %}
+  </div>
+  <div class="proj" style="margin-top: 8px;">{% if free_slots %}{{ free_slots }} free slot{{ "s" if free_slots != 1 }} under today's posture ({{ posture.max_positions }} max).{% else %}No free slots under today's posture ({{ posture.max_positions }} max): no new buys.{% endif %} Built from {{ data_asof|nicedate if data_asof else "the last close" }}'s close; refreshed after tonight's 6:30 pm update, so check the live signals before acting tomorrow. Ranges say how far a price may move, not which way. Informational only.</div>
+  {% else %}
+  <div class="empty-state" style="padding: 6px 0;">Nothing to do tomorrow: no positions, no orders and no buy-ready setups.</div>
+  {% endif %}
+</div>
+
 <div class="section-head" id="book"><div class="label">Positions</div></div>
 <div class="book">
   {% for t in pending_trades %}
   <div class="pos">
     <div class="l">
       <div class="t"><b>{{ t.ticker|sym }}</b> · buy {{ t.qty }} above {{ rs(t.entry_price) }} <span class="chip wait">waiting</span></div>
-      <div class="s">Stop {{ rs(t.stop) }} · target {{ rs(t.target) }} · placed {{ t.created_at|nicedate }} · expires after 10 sessions</div>
+      <div class="s">LTP <span data-live-px="{{ t.ticker }}" data-prefix="₹">{% set v = position_views.get(t.id|string) %}{{ rs(v.last) if v else "—" }}</span> · stop {{ rs(t.stop) }} · target {{ rs(t.target) }} · placed {{ t.created_at|nicedate }}{% if v and v.trigger_prob is defined %} · <b>{{ (v.trigger_prob * 100)|round|int }}% chance it fills next session</b>{% endif %}</div>
+      <div class="s" style="color: var(--muted-2);">Fills during market hours as soon as the price trades at {{ rs(t.entry_price) }}.</div>
+      {{ plan_block(t) }}
       <details class="notes"><summary>{{ "Note" if t.notes else "Add note" }}</summary><textarea data-note="{{ t.id }}" placeholder="Why this trade?">{{ t.notes or "" }}</textarea></details>
     </div>
     <div class="r"><button class="btn-sm" data-action="delete" data-id="{{ t.id }}" data-label="Cancel">Cancel</button></div>
@@ -104,6 +167,8 @@
     <div class="l">
       <div class="t"><b>{{ t.ticker|sym }}</b> · {{ t.side|lower }} {{ t.qty }} @ {{ rs(t.entry_price) }}</div>
       <div class="s">LTP <span data-live-px="{{ t.ticker }}" data-prefix="₹">{{ rs(t.last_price if t.last_price is not none else t.entry_price) }}</span>{% if t.last_price_date %} ({{ t.last_price_date|nicedate }}){% endif %}{% if t.stop is not none %} · stop {{ rs(t.stop) }} · {% if t.exit_rule == "trail21" %}exits on a close below the 21-day average{% else %}target {{ rs(t.target) }}{% endif %}{% endif %}</div>
+      <span class="live-signal" data-live-pos="{{ t.id }}" hidden></span>
+      {{ plan_block(t) }}
       <details class="notes"><summary>{{ "Note" if t.notes else "Add note" }}</summary><textarea data-note="{{ t.id }}" placeholder="Why this trade?">{{ t.notes or "" }}</textarea></details>
     </div>
     <div class="r">
@@ -174,8 +239,8 @@
     <div class="trade">
       <input type="number" inputmode="numeric" min="1" id="qty-{{ loop.index0 }}" value="{{ p.qty }}" data-qty="{{ loop.index0 }}" aria-label="Shares" {{ "disabled" if p.held or not p.tradeable }} />
       <select class="exit-rule" id="rule-{{ loop.index0 }}" aria-label="Exit rule" {{ "disabled" if p.held or not p.tradeable }}>
-        <option value="trail21" selected>Let it run (21-day)</option>
-        <option value="target">Fixed 2R target</option>
+        <option value="trail21" {{ "selected" if exit_rule_default == "trail21" }}>Let it run (21-day)</option>
+        <option value="target" {{ "selected" if exit_rule_default == "target" }}>Fixed 2R target</option>
       </select>
       <div class="cost" id="cost-{{ loop.index0 }}"></div>
       {% if p.held %}<button class="btn" disabled>In your book</button>
@@ -327,6 +392,66 @@
     const bars = (p.kind === 'stock' ? p.candles : p.spread).length, ahead = Math.max(0, ((p.kind === 'stock' ? p.path_high : p.path_mid) || []).length - 1);
     chart.timeScale().setVisibleLogicalRange({ from: bars - (p.kind === 'stock' ? 40 : 70), to: bars + ahead + 1 });
   }
+  const POS = {{ position_views | tojson }};
+  const posCharts = {}, posRecs = {};
+  function addRecCone(id) {
+    const c = posCharts[id], r = posRecs[id];
+    if (!c || !r || !r.best || !r.best.forecast) return;
+    const f = r.best.forecast, line = (k, color, w) => c.chart.addLineSeries({ color, lineWidth: w, lineStyle: LightweightCharts.LineStyle.Dashed, lastValueVisible: false, priceLineVisible: false }).setData(pts(f[k]));
+    line('mid', C.blue, 2); line('hi68', C.blue, 1); line('lo68', C.blue, 1);
+  }
+  async function loadRec(el) {
+    const id = el.dataset.rec, sym = el.dataset.symbol;
+    try {
+      const r = await (await fetch('/api/lab/recommend/' + encodeURIComponent(sym))).json();
+      if (r.error) { el.textContent = r.error; posRecs[id] = r; modelsPnl(); return; }
+      const b = r.best, m = b.report, f = b.forecast;
+      const pc = v => (v * 100).toFixed(0) + '%';
+      el.innerHTML = '<div>Best model for this stock: <b></b></div><div class="rec-why"></div><div style="margin-top: 4px;"><a></a></div>';
+      el.querySelector('b').textContent = b.name;
+      el.querySelector('.rec-why').textContent =
+        `Ranked 1st of ${r.ranking.length} (including your saved models). On data it wasn't chosen on (${b.report_span}): its 68% range caught ${pc(m.coverage68)}, 90% caught ${pc(m.coverage90)}, ` +
+        `skill vs "no change" ${(m.skill_vs_no_change * 100).toFixed(1)}%.` + (f ? ` Blue cone on the chart: next 5 sessions likely ₹${f.end_lo68.toLocaleString('en-IN')}–₹${f.end_hi68.toLocaleString('en-IN')}.` : '');
+      const a = el.querySelector('a'); a.href = '/lab?symbol=' + encodeURIComponent(sym.replace('.NS', '')); a.textContent = 'Open in Model Lab ›';
+      posRecs[id] = r; addRecCone(id); modelsPnl();
+    } catch (e) { el.textContent = 'Model recommendation unavailable right now.'; posRecs[id] = {}; modelsPnl(); }
+  }
+  function modelsPnl() {
+    const el = document.getElementById('ol-models'); if (!el) return;
+    const open = [...document.querySelectorAll('[data-rec][data-open="1"]')];
+    const done = open.filter(e => posRecs[e.dataset.rec]);
+    if (done.length < open.length) return;
+    let sum = 0, used = 0, missing = 0;
+    done.forEach(e => { const f = (posRecs[e.dataset.rec].best || {}).forecast; if (f) { sum += (+e.dataset.qty) * (f.end_mid - (+e.dataset.last)); used++; } else missing++; });
+    el.textContent = used ? `Models' expected P&L over the next 5 sessions: ${sum < 0 ? '−' : '+'}₹${Math.round(Math.abs(sum)).toLocaleString('en-IN')} (each stock's recommended model, centre of its range${missing ? `; ${missing} stock${missing > 1 ? 's' : ''} without enough history left out` : ''}). Most models expect little or no move; treat this as a lean, not a promise.`
+                          : "Models' expected P&L: not enough history to backtest these stocks.";
+  }
+  document.querySelectorAll('[data-rec]').forEach(loadRec);
+  function drawPosChart(id) {
+    const p = POS[id], el = document.getElementById('pos-chart-' + id);
+    const chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth, height: el.clientHeight,
+      layout: { background: { color: 'transparent' }, textColor: C.text, fontSize: 11 },
+      grid: { vertLines: { visible: false }, horzLines: { color: C.grid } },
+      timeScale: { borderVisible: false }, rightPriceScale: { borderVisible: false },
+      handleScroll: { horzTouchDrag: true, vertTouchDrag: false, mouseWheel: false, pressedMouseMove: true }, handleScale: false,
+    });
+    const dashed = LightweightCharts.LineStyle.Dashed, quiet = { lastValueVisible: false, priceLineVisible: false };
+    const main = chart.addCandlestickSeries({ upColor: C.up, downColor: C.down, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down, ...quiet });
+    main.setData(p.candles.map(c => ({ time: c[0], open: c[1], high: c[2], low: c[3], close: c[4] })));
+    chart.addLineSeries({ color: C.amber, lineWidth: 2, lineStyle: dashed, ...quiet }).setData(pts(p.path_high));
+    chart.addLineSeries({ color: C.amber, lineWidth: 2, lineStyle: dashed, ...quiet }).setData(pts(p.path_low));
+    if (p.target) main.createPriceLine({ price: p.target, color: C.up, lineWidth: 1, lineStyle: dashed, title: 'Target' });
+    if (p.one_r) main.createPriceLine({ price: p.one_r, color: C.text, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: '+1R' });
+    if (p.stop) main.createPriceLine({ price: p.stop, color: C.down, lineWidth: 1, lineStyle: dashed, title: 'Stop' });
+    main.createPriceLine({ price: p.entry, color: C.blue, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: p.pending ? 'Trigger' : 'Entry' });
+    chart.timeScale().setVisibleLogicalRange({ from: p.candles.length - 35, to: p.candles.length + p.path_high.length + 8 });  // room past the cone for the price labels
+    posCharts[id] = { chart }; addRecCone(id);
+  }
+  const drawnPos = new Set();
+  const drawPosWhenOpen = d => { const id = d.dataset.posChart; if (d.open && !drawnPos.has(id) && window.LightweightCharts) { drawnPos.add(id); drawPosChart(id); } };
+  document.querySelectorAll('details[data-pos-chart]').forEach(d => d.addEventListener('toggle', () => drawPosWhenOpen(d)));
+  window.addEventListener('load', () => document.querySelectorAll('details[data-pos-chart]').forEach(drawPosWhenOpen));  // open by default; the chart script loads deferred
   const drawn = new Set();
   document.querySelectorAll('details[data-chart]').forEach(d => d.addEventListener('toggle', () => {
     const i = +d.dataset.chart;

@@ -26,6 +26,16 @@
   .brief li { padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; color: #cfcfcf; }
   .brief li:last-child { border-bottom: none; }
 
+  .routine { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
+  .routine li { display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; color: var(--muted); }
+  .routine li:last-child { border-bottom: none; }
+  .routine li b { color: var(--text); font-weight: 500; }
+  .routine li.now { color: var(--text); }
+  .routine li.now .when { color: var(--green); font-weight: 600; }
+  .routine li.now .when::before { content: "● "; }
+  .routine-all summary { font-size: 13px; color: var(--muted); cursor: pointer; padding: 8px 0; }
+  .principle { font-size: 13px; color: var(--muted); margin-top: 10px; }
+
   .remove { background: none; border: none; color: var(--muted-2); font-size: 18px; width: 36px; height: 36px; cursor: pointer; }
   .remove:hover { color: var(--red); }
   @media (max-width: 600px) {
@@ -74,7 +84,17 @@
 </div>
 
 <div class="card">
-  <div class="label">Tomorrow's setups</div>
+  <div class="label">Today's process</div>
+  {% macro step_row(step) %}<li class="{{ 'now' if step.key == routine_now }}"><span class="when">{{ step.when }}</span><span><b>{{ step.title }}.</b> {{ step.text }}{% if step.key == "before" %} Today: {{ posture.text }}{% endif %}</span></li>{% endmacro %}
+  <ul class="routine">{% for step in routine if step.key == routine_now %}{{ step_row(step) }}{% endfor %}</ul>
+  <details class="routine-all"><summary>Show the whole day ›</summary>
+    <ul class="routine">{% for step in routine %}{{ step_row(step) }}{% endfor %}</ul>
+  </details>
+  <div class="principle">How this makes money, when it does: most trades are small losses cut at the stop, and a few winners run to 2R or more. Every rule above protects that ratio. Informational only; no rule guarantees a profit.</div>
+</div>
+
+<div class="card">
+  <div class="label">Buy</div>
   {% if setups %}
   <div class="list">
     {% for s in setups %}
@@ -87,7 +107,7 @@
           {% if s.results_date %}<span class="chip wait">Results {{ s.results_date|nicedate }}</span>{% endif %}
         </div>
         <div class="sub">{{ s.reason }}{% if s.review %} · review {{ s.review.score }}/100{% endif %}</div>
-        {% if s.kind == "stock" and s.pivot %}<span class="live-pivot" data-live-pivot="{{ s.symbol }}" data-pivot="{{ s.pivot }}"></span>{% endif %}
+        {% if s.kind == "stock" %}<span class="live-signal" data-live-signal="{{ s.symbol }}" hidden></span>{% if s.pivot %}<span class="live-pivot" data-live-pivot="{{ s.symbol }}" data-pivot="{{ s.pivot }}"></span>{% endif %}{% endif %}
       </div>
       {% if s.kind == "stock" %}<div class="right" style="text-align: right;"><span data-live-px="{{ s.symbol }}" data-prefix="₹"></span><div data-live-chg="{{ s.symbol }}" style="font-size: 13px;"></div></div>{% endif %}
       <span class="go">›</span>
@@ -96,6 +116,60 @@
   </div>
   {% else %}
   <div class="empty-state">Nothing is at a proper buy point tonight — nothing to do is also a decision.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="label">Sell what you hold</div>
+  {% if sells %}
+  <div class="list">
+    {% for r in sells %}
+    <a class="row" href="/stock/{{ r.symbol }}">
+      <div class="main">
+        <div class="top">
+          <span class="sym">{{ r.symbol|sym }}</span>
+          <span class="chip {{ r.cls }}">{{ r.action }}</span>
+          {% if r.position %}<span class="chip">paper position</span>{% endif %}
+        </div>
+        <div class="sub">{{ r.reason }}</div>
+        <span class="live-signal" data-live-signal="sell:{{ r.symbol }}" hidden></span>
+      </div>
+      <div class="right"><span data-live-px="{{ r.symbol }}" data-prefix="₹">₹{{ "{:,.2f}".format(r.last) }}</span><div class="muted" style="font-size: 13px;">sell below ₹{{ "{:,.2f}".format(r.sell_below) }}</div></div>
+      <span class="go">›</span>
+    </a>
+    {% endfor %}
+  </div>
+  <div class="principle">Checked tonight for your paper positions and watchlist. Own a stock that isn't here? Add it to the watchlist and it's checked from tomorrow.</div>
+  {% else %}
+  <div class="empty-state">Nothing to check: no paper positions and an empty watchlist.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="label">Short (F&amp;O futures only)</div>
+  {% if shorts %}
+  <div class="list">
+    {% for r in shorts %}
+    <a class="row" href="/stock/{{ r.symbol }}">
+      <div class="main">
+        <div class="top">
+          <span class="sym">{{ r.symbol|sym }}</span>
+          <span class="chip bad">{{ "SHORT RANGE" if r.status == "IN SHORT RANGE" else "NEAR BREAKDOWN" }}</span>
+          <span class="chip">RS {{ r.rs_rank }}</span>
+        </div>
+        <div class="sub">Support ₹{{ "{:,.2f}".format(r.support) }} ({{ "%+.1f"|format(r.pct_vs_support) }}%) ·
+          {% if r.order == "STOP" %}sell-stop{% else %}sell{% endif %} ₹{{ "{:,.2f}".format(r.entry) }} · stop ₹{{ "{:,.2f}".format(r.stop) }} ({{ r.stop_pct }}%) · target ₹{{ "{:,.2f}".format(r.target) }}</div>
+        <div class="sub">Lot {{ r.lot }} shares · 1 lot risks ₹{{ "{:,}".format(r.risk_per_lot) }} · {% if r.lots %}{{ r.lots }} lot{{ "s" if r.lots != 1 }} fits {{ r.risk_pct }}% risk{% else %}<span class="down">1 lot is above the {{ r.risk_pct }}% risk budget; skip or use a bigger account</span>{% endif %}</div>
+        <span class="live-signal" data-live-signal="short:{{ r.symbol }}" hidden></span>
+      </div>
+      <div class="right"><span data-live-px="{{ r.symbol }}" data-prefix="₹">₹{{ "{:,.2f}".format(r.last) }}</span><div data-live-chg="{{ r.symbol }}" style="font-size: 13px;"></div></div>
+      <span class="go">›</span>
+    </a>
+    {% endfor %}
+  </div>
+  <div class="principle">Stage-4 downtrends (under falling 50/150/200-day averages, weakest 30% by RS) at or just through support. Cash-market shorts must be closed the same day, so these are for futures. Not yet backtested in this app; treat as a watchlist, not a proven edge.</div>
+  {% else %}
+  <div class="empty-state">No clean short setups tonight.</div>
   {% endif %}
 </div>
 

@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}Replay — Marketly{% endblock %}
+{% block extra_head %}
+<style>
+  main { max-width: 1320px; }
+  .rp-head { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; margin-bottom: 14px; }
+  .rp-head h1 { margin: 0; }
+  .rp-head .sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; }
+  .controls input, .controls select { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text); font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 6px; }
+  .controls button { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text); font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+  .controls button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .verdict { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .word { font-size: 16px; font-weight: 700; padding: 3px 10px; border-radius: 4px; }
+  .word.ok { color: var(--green); border: 1px solid var(--green); } .word.bad { color: var(--red); border: 1px solid var(--red); }
+  .word.lock { color: var(--green); border: 1px solid var(--green); } .word.chose { color: var(--amber); border: 1px solid var(--amber); }
+  .big { font-size: 30px; font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+  .stats div { border-left: 1px solid var(--border); padding-left: 12px; }
+  .stats div:first-child { border-left: none; padding-left: 0; }
+  .stats .k { color: var(--muted); font-size: 13px; } .stats .v { font-size: 22px; font-weight: 600; }
+  .txt { font-size: 15px; line-height: 1.7; margin-top: 8px; }
+  table.t { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  table.t td, table.t th { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right; }
+  table.t td:first-child, table.t th:first-child { text-align: left; }
+  table.t th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  table.t tr.win td { background: rgba(34, 197, 94, .08); }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .controls { margin-left: 0; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="rp-head">
+  <div>
+    <h1>Replay</h1>
+    <div class="sub">Pick any past day. See what the model ranked top and bottom that evening, and what those stocks actually did over the next 5 sessions. <a href="/lab">← Model Lab</a></div>
+  </div>
+  <div class="controls">
+    <select id="model" aria-label="Model"></select>
+    <button id="prev">← Week</button>
+    <input type="date" id="day" aria-label="Day">
+    <button id="next">Week →</button>
+    <button id="random" class="primary">Random day</button>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card" style="margin: 0;">
+    <div class="label">That week</div>
+    <div id="week" class="empty-state">Loading…</div>
+  </div>
+  <div class="card" style="margin: 0;">
+    <div class="label">Its record over every week</div>
+    <div id="record" class="empty-state">Loading…</div>
+  </div>
+</div>
+<div class="grid2" style="margin-top: 16px;">
+  <div class="card" style="margin: 0;"><div class="label">It ranked these top (most likely to rise)</div><div id="best" class="empty-state">—</div></div>
+  <div class="card" style="margin: 0;"><div class="label">It ranked these bottom (avoid)</div><div id="worst" class="empty-state">—</div></div>
+</div>
+<div class="card" style="margin-top: 16px;">
+  <div class="label">Portfolio test: the ranking as a real weekly portfolio, after costs</div>
+  <div class="controls" style="margin: 8px 0 0;">
+    <select id="pf-model" aria-label="Book"></select>
+    <select id="pf-uni" aria-label="Stocks"></select>
+    <select id="pf-hedge" aria-label="Hedge"><option>none</option><option>Nifty futures</option><option>Nifty puts</option></select>
+  </div>
+  <div id="pf" class="empty-state">Loading…</div>
+  <div id="pf-chart" style="height: 300px; margin-top: 10px;"></div>
+  <div class="legend" style="display: flex; gap: 14px; font-size: 13px; color: var(--muted); margin-top: 6px;"><span><b style="color: var(--green);">━</b> portfolio, after costs</span><span><b style="color: #9e9e9e;">━</b> Nifty (no dividends)</span><span><b style="color: var(--blue);">┃</b> 2024+: locked test</span></div>
+  <div id="pf-years"></div>
+  <div class="label" style="margin-top: 18px;">Slippage stress test: what if trading costs more than assumed?</div>
+  <div id="pf-stress" class="empty-state">Not run yet. <span class="hint">python -m code.research.portfolio --stress</span></div>
+</div>
+
+<div class="card" style="margin-top: 16px;">
+  <div class="label">Model search: combinations tried, best kept</div>
+  <div id="search" class="empty-state">Loading…</div>
+</div>
+
+<script src="/static/js/lightweight-charts-4.2.3.js" nonce="{{ csp_nonce }}"></script>
+<script nonce="{{ csp_nonce }}">
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const pc = (v, d = 1) => v == null ? '—' : (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+  const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+  const nice = s => new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const NAMES = { current: 'Live model', best: 'Search winner' };
+  const term = (t, tip) => `<span class="term" title="${esc(tip)}">${t}</span>`;
+  const IC = term('rank IC', "How well that day's ranking lined up with what the stocks actually did. 0 = random, 1 = perfect; good quant signals average 0.02 to 0.05.");
+  let state = { day: '', model: new URLSearchParams(location.search).get('model') || '', d: null };
+
+  async function load(day) {
+    let d;
+    try { d = await (await fetch(`/api/lab/replay?model=${state.model}&date=${day || ''}`)).json(); }
+    catch (e) { $('week').textContent = 'Could not reach the server.'; return; }
+    state.d = d;
+    renderSearch(d.search);
+    if (d.error) {
+      ['week', 'record'].forEach(id => $(id).innerHTML = `${esc(d.error)} <span class="hint">Build it on the laptop: python -m code.research.model_search</span>`);
+      return;
+    }
+    state.model = d.model;
+    $('model').innerHTML = d.models.map(m => `<option value="${m}" ${m === d.model ? 'selected' : ''}>${NAMES[m] || m}</option>`).join('');
+    const w = d.day;
+    state.day = w.date;
+    $('day').value = w.date; $('day').min = w.first; $('day').max = w.last;
+    history.replaceState(null, '', `?model=${d.model}&date=${w.date}`);
+    const period = d.model === 'best' ? (w.date >= '2024-01-01'
+      ? '<span class="word lock">LOCKED TEST — NEVER USED TO CHOOSE</span>'
+      : '<span class="word chose">USED TO CHOOSE THE WINNER</span>') : '';
+    $('week').className = '';
+    $('week').innerHTML = `
+      <div class="verdict"><span class="big">${nice(w.date)}</span>
+        <span class="word ${w.right ? 'ok' : 'bad'}">${w.right ? 'RIGHT — TOP BEAT BOTTOM' : 'WRONG — BOTTOM BEAT TOP'}</span> ${period}</div>
+      <div class="stats">
+        <div><div class="k">Top 10% did</div><div class="v ${cls(w.top)}">${pc(w.top, 2)}</div></div>
+        <div><div class="k">All ${w.n} stocks did</div><div class="v ${cls(w.all)}">${pc(w.all, 2)}</div></div>
+        <div><div class="k">Bottom 10% did</div><div class="v ${cls(w.bottom)}">${pc(w.bottom, 2)}</div></div>
+      </div>
+      <div class="txt"><b>What it predicts:</b> which stocks will do better than the others, not whether the market goes up. The Nifty hedge takes care of the market's direction.</div>
+      <div class="txt">Buy at the next open, sell at the close 5 sessions later, before costs.
+        ${pc(w.top_beat_median, 0).replace('+', '')} of its top tenth beat the middle stock; ${pc(w.bottom_lagged_median, 0).replace('+', '')} of its bottom tenth lagged it.
+        ${IC} that day: ${w.ic == null ? '—' : w.ic.toFixed(3)}.</div>`;
+    const r = w.record;
+    $('record').className = '';
+    $('record').innerHTML = `
+      <div class="verdict"><span class="big">${r.right.toLocaleString('en-IN')} of ${r.weeks.toLocaleString('en-IN')}</span>
+        <span class="word ${r.right / r.weeks > 0.5 ? 'ok' : 'bad'}">${pc(r.right / r.weeks, 0).replace('+', '')} OF DAYS RIGHT</span></div>
+      <div class="txt">Days where its top tenth beat its bottom tenth over the next 5 sessions, ${nice(w.first)} to ${nice(w.last)}.
+        A coin flip gets 50%. Up to the day shown: ${r.upto_right} of ${r.upto_weeks}.</div>
+      <div class="txt">On average its top tenth made <b class="${cls(r.avg_top)}">${pc(r.avg_top, 2)}</b> and its bottom tenth <b class="${cls(r.avg_bottom)}">${pc(r.avg_bottom, 2)}</b> per 5 sessions, before costs (0.25% a round trip).</div>`;
+    const table = (rows, good) => {
+      const hits = rows.filter(p => good ? p.vs_median > 0 : p.vs_median < 0).length;
+      return `<div class="txt">The middle stock moved <b class="${cls(w.median)}">${pc(w.median, 1)}</b> that week. ${hits} of ${rows.length} ${good ? 'beat it' : 'did worse than it'}.</div>
+      <table class="t"><tr><th>Stock</th><th>Its rank</th><th>Next 5 sessions</th><th>vs middle stock</th><th></th></tr>${rows.map(p => {
+        const ok = good ? p.vs_median > 0 : p.vs_median < 0;
+        return `<tr class="${ok ? 'win' : ''}"><td><a href="/lab?symbol=${encodeURIComponent(p.symbol)}">${esc(p.symbol)}</a></td><td>${(p.rank * 100).toFixed(0)}</td><td class="${cls(p.move)}">${pc(p.move, 1)}</td><td class="${cls(p.vs_median)}">${pc(p.vs_median, 1)}</td><td>${ok ? (good ? 'BEAT ✓' : 'LAGGED ✓') : (good ? 'LAGGED ✗' : 'BEAT ✗')}</td></tr>`;
+      }).join('')}</table>`;
+    };
+    $('best').className = ''; $('best').innerHTML = table(w.best_picks, true);
+    $('worst').className = ''; $('worst').innerHTML = table(w.worst_picks, false);
+  }
+
+  function renderSearch(s) {
+    const el = $('search');
+    if (!s) { el.innerHTML = 'No model search has run yet. <span class="hint">Run on the laptop: python -m code.research.model_search</span>'; return; }
+    el.className = '';
+    const L = s.locked, gain = L.best.ic - L.baseline.ic;
+    const same = L.best.key === L.baseline.key;
+    el.innerHTML = `
+      <div class="txt">${s.tried.length} combinations tried in ${s.rounds.length - 1} rounds on ${s.valid[0].slice(0, 4)}–2023: each round tried every one-step change from the best so far and kept a change only if it raised ${IC} by more than ${s.min_gain}. Last search ${nice(s.generated)}.</div>
+      <div class="stats">
+        <div><div class="k">Winner</div><div class="v" style="font-size: 16px;">${esc(s.best.key)}</div></div>
+        <div><div class="k">${IC}, 2021–23 (choosing)</div><div class="v">${s.best.ic.toFixed(3)} <span class="hint">live ${s.baseline.ic.toFixed(3)}</span></div></div>
+        <div><div class="k">${IC}, 2024+ (locked test)</div><div class="v ${gain > 0 ? 'pos' : gain < 0 ? 'neg' : ''}">${L.best.ic.toFixed(3)} <span class="hint">live ${L.baseline.ic.toFixed(3)}</span></div></div>
+      </div>
+      <div class="txt">${same ? 'No combination beat the live model by enough, so the live model stays.' :
+        gain > 0 ? `<span class="word ok">WINNER HELD UP</span> On 2024+, which no try had seen, the winner ranked better than the live model (top-minus-bottom ${pc(L.best.spread, 2)} vs ${pc(L.baseline.spread, 2)} per 5 sessions).`
+                 : `<span class="word bad">WINNER DID NOT HOLD UP</span> On 2024+ it ranked worse than the live model: its edge on 2021–23 was partly luck.`}
+        The 2024+ period has been checked ${s.locked_history.length} time${s.locked_history.length === 1 ? '' : 's'}.</div>
+      <table class="t"><tr><th>Combination (model | target | inputs | scaling)</th><th>Round</th><th>${IC}</th><th>Days right</th><th>Top − bottom</th></tr>
+        ${s.tried.map(r => `<tr class="${r.key === s.best.key ? 'win' : ''}"><td>${esc(r.key)}${r.key === s.baseline.key ? ' <span class="hint">(live)</span>' : ''}</td><td>${r.round}</td><td>${r.ic.toFixed(4)}</td><td>${pc(r.ic_days_positive, 0).replace('+', '')}</td><td class="${cls(r.spread)}">${pc(r.spread, 2)}</td></tr>`).join('')}</table>`;
+  }
+
+  // ---- portfolio test ----
+  let PF = null, chart = null;
+  const SUCCESS = { sharpe: 1.0 };   // success bar agreed in the plan
+  async function loadPf() {
+    try { PF = await (await fetch('/api/lab/portfolio')).json(); } catch (e) { $('pf').textContent = 'Could not reach the server.'; return; }
+    if (PF.error) { $('pf').innerHTML = `${esc(PF.error)} <span class="hint">Run on the laptop: python -m code.research.portfolio</span>`; return; }
+    const BOOKS = { combined: 'Swing + position, thirds (Phase 2)', best: 'Swing: 5-session winner, weekly', best_h20: 'Position: 20-session winner, monthly',
+                    best_h60: 'Position: 60-session winner, monthly', current: 'Live model, 5-session, weekly (2015+)' };
+    const have = [...new Set(PF.configs.map(c => c.model))];
+    $('pf-model').innerHTML = Object.keys(BOOKS).filter(m => have.includes(m)).map(m => `<option value="${m}">${BOOKS[m]}</option>`).join('');
+    const unis = [...new Set(PF.configs.map(c => c.universe))];
+    $('pf-uni').innerHTML = unis.map(u => `<option>${esc(u)}</option>`).join('');
+    renderPf();
+  }
+  function renderPf() {
+    const c = PF.configs.find(c => c.model === $('pf-model').value && c.universe === $('pf-uni').value && c.hedge === $('pf-hedge').value);
+    if (!c) return;
+    const R = PF.rules, nf = PF.nifty;
+    const row = (name, m, n) => !m || !m.cagr && m.cagr !== 0 ? '' : `<tr><td>${name}</td>
+      <td class="${cls(m.cagr)}">${pc(m.cagr)}</td><td class="hint">${n && n.cagr != null ? pc(n.cagr) : '—'}</td>
+      <td>${m.sharpe.toFixed(2)} <span class="hint">${n && n.sharpe != null ? n.sharpe.toFixed(2) : ''}</span></td>
+      <td class="neg">${pc(m.max_dd, 0)} <span class="hint">${n && n.max_dd != null ? pc(n.max_dd, 0) : ''}</span></td>
+      <td>${m.avg_trade == null ? '—' : `<span class="${cls(m.avg_trade)}">${pc(m.avg_trade, 2)}</span> · ${pc(m.trade_hit, 0).replace('+', '')} won`}</td>
+      <td>${m.turnover_yr == null ? '—' : (m.turnover_yr / 2).toFixed(0) + '× the book'}</td></tr>`;
+    const L = c.periods['2024+'] || {};
+    const pass = L.sharpe >= SUCCESS.sharpe && L.cagr > (nf.periods['2024+'] || {}).cagr && L.max_dd > (nf.periods['2024+'] || {}).max_dd;
+    $('pf').className = '';
+    $('pf').innerHTML = `
+      <div class="txt">${c.model === 'combined' ? `One third of the money in each of the three books (swing weekly, 20-session and 60-session position books monthly), each trading by its own rules.`
+        : (() => { const [rb, ex] = (R.books || {})[c.model] || [R.rebalance_sessions, R.exit_rank];
+            return `Every ${rb} sessions: hold the ${R.n} top-ranked stocks, equal weight, bought at the next open. A held stock stays while it is in the top ${((1 - ex) * 100).toFixed(0)}%.`; })()}
+        Costs ${pc(R.buy_cost, 2).replace('+', '')} to buy and ${pc(R.sell_cost, 2).replace('+', '')} to sell (STT, stamp duty, fees, slippage). ${term('Sharpe', 'Return above the ' + (R.rf * 100).toFixed(1) + '% risk-free rate, per unit of ups and downs. Above 1 is good; Nifty is usually 0.3 to 0.8.')} uses ${(R.rf * 100).toFixed(1)}% risk-free.</div>
+      <div class="verdict" style="margin-top: 8px;"><span class="word ${pass ? 'ok' : 'bad'}">${pass ? 'PASSES THE SUCCESS BAR ON 2024+' : 'DOES NOT PASS THE SUCCESS BAR ON 2024+'}</span>
+        <span class="hint">Bar: Sharpe ≥ 1, beats Nifty, smaller worst fall than Nifty — on the locked period.</span></div>
+      <table class="t"><tr><th>Period</th><th>Per year</th><th>Nifty</th><th>${term('Sharpe', 'Return per unit of risk, above the risk-free rate')} <span class="hint">Nifty</span></th><th>Worst fall <span class="hint">Nifty</span></th><th>Avg trade (net)</th><th>Bought &amp; sold / yr</th></tr>
+        ${Object.keys(c.periods).map(k => row(k + (k === '2024+' ? ' (locked)' : k === '2021-23' && c.model !== 'current' ? ' (chose model)' : ''), c.periods[k], nf.periods[k])).join('')}</table>`;
+    const yrs = Object.keys(c.yearly);
+    const beat = yrs.filter(y => c.yearly[y] > (nf.yearly[y] ?? Infinity)).length;
+    $('pf-years').innerHTML = `<div class="txt">Beat Nifty in <b>${beat} of ${yrs.length}</b> years.</div>
+      <table class="t"><tr><th>Year</th>${yrs.map(y => `<th>${y}</th>`).join('')}</tr>
+        <tr><td>Portfolio</td>${yrs.map(y => `<td class="${cls(c.yearly[y])}">${pc(c.yearly[y], 0)}</td>`).join('')}</tr>
+        <tr><td>Nifty</td>${yrs.map(y => `<td class="${cls(nf.yearly[y])}">${pc(nf.yearly[y], 0)}</td>`).join('')}</tr></table>`;
+    drawPf(c, nf);
+    renderStress(c.universe);
+  }
+  function renderStress(uni) {
+    const S = PF.stress, el = $('pf-stress');
+    if (!S || !S.universes[uni]) return;
+    const u = S.universes[uni], n24 = (PF.nifty.periods['2024+'] || {}).cagr;
+    const lakh = v => v >= 1e7 ? '₹' + (v / 1e7).toFixed(0) + ' crore' : '₹' + (v / 1e5).toFixed(0) + ' lakh';
+    const be = (v, pts, target) => v != null ? `${(v * 100).toFixed(2)}% per side`
+      : (pts[pts.length - 1].periods['2024+'].cagr >= target ? `above ${(pts[pts.length - 1].slip * 100).toFixed(1)}% (never reached)` : 'below the tested range');
+    const flat = u.flat.map(p => p.periods['2024+']), sized = u.sized;
+    el.className = '';
+    el.innerHTML = `
+      <div class="txt">Swing book (5-session winner), Nifty futures hedge, ${esc(uni)}, locked period 2024+. Slippage is what you lose to the bid-ask spread and to moving the price when you trade.</div>
+      <table class="t"><tr><th>Slippage per side</th>${u.flat.map(p => `<th>${(p.slip * 100).toFixed(1)}%</th>`).join('')}<th>Nifty</th></tr>
+        <tr><td>Per year, 2024+</td>${flat.map(m => `<td class="${cls(m.cagr - n24)}">${pc(m.cagr)}</td>`).join('')}<td>${pc(n24)}</td></tr>
+        <tr><td>Sharpe</td>${flat.map(m => `<td>${m.sharpe.toFixed(2)}</td>`).join('')}<td>${(PF.nifty.periods['2024+'] || {}).sharpe?.toFixed(2) ?? '—'}</td></tr></table>
+      <div class="txt">It stops beating Nifty at <b>${be(u.breakeven_vs_nifty_2024, u.flat, n24)}</b> and stops making money at <b>${be(u.breakeven_zero_2024, u.flat, 0)}</b>.</div>
+      <div class="txt" style="margin-top: 12px;"><b>Estimated for your book size</b>: half the spread (${S.spread_tiers.map(t => (t[1] * 100).toFixed(2) + '%').join(' / ')} for stocks trading ₹100 cr+ / ₹20 cr+ / less a day) plus price impact that grows with order size against the stock's daily turnover.</div>
+      <table class="t"><tr><th>Book size</th><th>Typical slippage</th><th>Per year, 2024+</th><th>Sharpe</th><th>Worst fall</th><th>Avg trade (net)</th></tr>
+        ${sized.map(s => { const m = s.periods['2024+']; return `<tr><td>${lakh(s.capital)}</td><td>${(s.median_slip * 100).toFixed(2)}%</td><td class="${cls(m.cagr)}">${pc(m.cagr)}</td><td>${m.sharpe.toFixed(2)}</td><td class="neg">${pc(m.max_dd, 0)}</td><td>${m.avg_trade == null ? '—' : pc(m.avg_trade, 2)}</td></tr>`; }).join('')}</table>
+      <div class="hint" style="margin-top: 6px;">Spread levels are estimates, not measured fills. Forward paper trading (Phase 4) will measure the real ones.</div>`;
+  }
+  function drawPf(c, nf) {
+    const el = $('pf-chart');
+    if (!window.LightweightCharts) return;
+    if (chart) chart.remove();
+    chart = LightweightCharts.createChart(el, { width: el.clientWidth, height: 300, layout: { background: { color: 'transparent' }, textColor: '#9aa0a6' },
+      grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255,255,255,.06)' } }, rightPriceScale: { mode: 1 }, timeScale: { borderVisible: false } });
+    const start = c.curve[0][0];
+    const base = nf.curve.find(p => p[0] >= start);
+    const nfc = nf.curve.filter(p => p[0] >= start).map(p => ({ time: p[0], value: p[1] / base[1] }));
+    chart.addLineSeries({ color: '#9e9e9e', lineWidth: 2, priceLineVisible: false }).setData(nfc);
+    const s = chart.addLineSeries({ color: '#22C55E', lineWidth: 2, priceLineVisible: false });
+    s.setData(c.curve.map(p => ({ time: p[0], value: p[1] })));
+    const lock = c.curve.find(p => p[0] >= '2024-01-01');
+    if (lock) s.setMarkers([{ time: lock[0], position: 'aboveBar', color: '#3B82F6', shape: 'arrowDown', text: 'locked test starts' }]);
+    chart.timeScale().fitContent();
+    new ResizeObserver(() => chart && chart.applyOptions({ width: el.clientWidth })).observe(el);
+  }
+  ['pf-model', 'pf-uni', 'pf-hedge'].forEach(id => $(id).onchange = renderPf);
+  loadPf();
+
+  $('model').onchange = e => { state.model = e.target.value; load(state.day); };
+  $('day').onchange = e => load(e.target.value);
+  $('prev').onclick = () => state.d?.day && load(state.d.day.prev);
+  $('next').onclick = () => state.d?.day && load(state.d.day.next);
+  $('random').onclick = () => {
+    const w = state.d?.day; if (!w) return;
+    const a = new Date(w.first).getTime(), b = new Date(w.last).getTime();
+    load(new Date(a + Math.random() * (b - a)).toISOString().slice(0, 10));
+  };
+  load(new URLSearchParams(location.search).get('date') || '');
+})();
+</script>
+{% endblock %}

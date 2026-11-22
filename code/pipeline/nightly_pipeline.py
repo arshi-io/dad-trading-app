@@ -218,6 +218,7 @@ def compute_breadth_pct(tickers: List[str]) -> float:
 # Enough history for a 12-month RS return plus a 52-week trend-template
 # window with margin, even for the earliest as-of date a caller might slice to.
 UNIVERSE_HISTORY_YEARS = 3
+MAX_BAR_GAP_DAYS = 10
 UNIVERSE_CACHE_TTL = timedelta(hours=24)
 UNIVERSE_BATCH = 100
 
@@ -270,7 +271,10 @@ def fetch_universe_closes(
                         # kept serving 1 Oct bars on 6 Oct. Holidays just cost one refetch.
                         last_weekday = end_ts - pd.offsets.BDay(1)
                         covers_end = not cached.empty and cached.index.max() >= last_weekday
-                        if covers_start and covers_end:
+                        # NSE closes for at most a few days at a time; a longer hole means the file
+                        # was stitched from two different windows and every moving average is wrong.
+                        no_gap = cached.index.to_series().diff().max() <= pd.Timedelta(days=MAX_BAR_GAP_DAYS)
+                        if covers_start and covers_end and no_gap:
                             result[ticker] = cached
                             continue
                     except Exception:
@@ -304,7 +308,8 @@ def fetch_universe_closes(
                 continue
             sub.index = pd.DatetimeIndex(sub.index, name="timestamp")
             sub = _patch_from_bhavcopy(ticker, sub)
-            sub = sub.dropna(subset=["close"])
+            # The bhavcopy patch can append bars past `end`; a historical window must stay historical.
+            sub = sub[(sub.index >= start_ts) & (sub.index < end_ts + pd.Timedelta(days=1))].dropna(subset=["close"])
             if sub.empty:
                 continue
             sub.index = pd.DatetimeIndex(sub.index, name="timestamp")
@@ -697,6 +702,55 @@ def _compute_screen_stance(item: Dict[str, Any], regime: str) -> Dict[str, Any]:
 
 
 REVIEW_PRECOMPUTE_MAX = 15
+SHORT_QUEUE = 8
+# Shorts fight the tide in an uptrend and ride it in a correction, so their size runs opposite to longs.
+SHORT_RISK_PCT = {"DEFENSIVE": 1.0, "CAUTIOUS": 0.5, "PRESS": 0.25}
+
+
+def _build_short_queue(screen: Dict[str, Any], posture: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Stage-4 F&O stocks at or just through support, sized in futures lots. A failure here must
+    not cost the snapshot."""
+    from code.signals.sell_rules import short_plan, stage4
+    from code.trading.predict import paper_capital
+    try:
+        lots = fetch_lot_sizes()
+        weak = [i for i in screen.get("items", []) if i["symbol"] in lots and (i.get("rs_rank") or 100) <= 30]
+        prices = fetch_universe_closes([i["symbol"] for i in weak])
+        risk_pct = SHORT_RISK_PCT.get(posture.get("level"), 0.5)
+        out = []
+        for i in weak:
+            df = prices.get(i["symbol"])
+            if df is None or df.empty or not stage4(df, i["rs_rank"]):
+                continue
+            plan = short_plan(df.dropna(subset=["open", "high", "low", "close"]), lots[i["symbol"]], paper_capital() * risk_pct / 100)
+            if plan and not plan["wide_stop"]:  # a stop over 8% away is a bet, not a setup
+                out.append({"symbol": i["symbol"], "rs_rank": i["rs_rank"], "sector": i.get("sector"), "risk_pct": risk_pct, **plan})
+        out.sort(key=lambda r: (r["status"] != "IN SHORT RANGE", r["rs_rank"]))
+        return out[:SHORT_QUEUE]
+    except Exception:
+        logger.exception("short queue failed")
+        return []
+
+
+def _build_sell_list(watchlist: List[str]) -> List[Dict[str, Any]]:
+    """Exit check for every open paper position (against its own stop) and every watchlist stock."""
+    from code.signals.sell_rules import sell_check
+    from code.trading.portal import get_trades
+    try:
+        stops = {t["ticker"]: t.get("stop") for t in get_trades(limit=100, status="open") if t.get("kind") != "pair"}
+        out = []
+        for sym in dict.fromkeys(list(stops) + list(watchlist)):
+            verdict = sell_check(kite_fetch(sym), stops.get(sym))
+            if verdict:
+                out.append({"symbol": sym, "position": sym in stops, **verdict})
+        order = {"SELL": 0, "SELL HALF": 1, "WEAK": 2, "TIGHTEN": 3, "HOLD": 4}
+        out.sort(key=lambda r: (order[r["action"]], not r["position"]))
+        return out
+    except Exception:
+        logger.exception("sell list failed")
+        return []
+
+
 RESULTS_SOON_DAYS = 28
 
 
@@ -720,6 +774,7 @@ def _screen_changes(screen: Dict[str, Any], previous: Optional[Dict[str, Any]]) 
 
 def _build_predictions_and_settle(
     screen_section: Dict[str, Any], pairs_section: Dict[str, Any], posture: Dict[str, Any], results: Dict[str, Optional[str]],
+    setups: List[str] = (),
 ) -> List[Dict[str, Any]]:
     """Projections for screen passes, entry-zone pairs and the watchlist; then settle paper
     trades and score yesterday's calls. A failure here must never cost the rest of the snapshot."""
@@ -728,7 +783,7 @@ def _build_predictions_and_settle(
 
     predictions: List[Dict[str, Any]] = []
     try:
-        candidates = prediction_candidates(screen_section, pairs_section, get_watchlist())
+        candidates = prediction_candidates(screen_section, pairs_section, get_watchlist(), setups)
         predictions = build_predictions(candidates, pairs_section, kite_fetch, risk_pct=posture["risk_pct"], results=results)
         log_predictions(predictions)
     except Exception:
@@ -884,7 +939,8 @@ def run_pipeline() -> Dict[str, Any]:
     )
 
     action_queue = _build_action_queue(screen_section, pairs_section)
-    predictions = _build_predictions_and_settle(screen_section, pairs_section, posture, results)
+    predictions = _build_predictions_and_settle(screen_section, pairs_section, posture, results,
+                                                [a["symbol"] for a in action_queue if a["kind"] == "stock"])
     changes = _screen_changes(screen_section, _previous_snapshot(snapshot_path))
 
     payload = {
@@ -911,6 +967,8 @@ def run_pipeline() -> Dict[str, Any]:
         },
         "briefing": {"items": _build_briefing(health, brd, posture, leaders, changes, results_soon, grade, b200)},
         "action_queue": action_queue,
+        "shorts": _build_short_queue(screen_section, posture),
+        "sells": _build_sell_list(watchlist),
         "predictions": predictions,
         "results": results,
         "screen": screen_section,

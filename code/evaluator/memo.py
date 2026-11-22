@@ -76,7 +76,7 @@ def _load_cached_memo(ticker: str, snapshot_date: str) -> Optional[Dict[str, Any
         if datetime.utcnow() - created > timedelta(hours=24):
             return None
         payload = json.loads(payload_text)
-        return payload
+        return None if payload.get("sentinel") else payload  # a failed call is retried, not served from cache
     finally:
         conn.close()
 
@@ -133,7 +133,15 @@ def _short_error(exc: Exception) -> str:
     card."""
     response = getattr(exc, "response", None)
     if response is not None:
-        return f"HTTP {response.status_code} {response.reason}"
+        try:
+            err = response.json().get("error")
+        except Exception:
+            err = None
+        err = err if isinstance(err, dict) else {}
+        code = err.get("code") or err.get("type")
+        if code in ("insufficient_quota", "credit_balance_exhausted", "billing_error") or err.get("type") == "insufficient_quota":
+            return "the API account is out of credits (add credits with the provider, or switch MODEL_PROVIDER)"
+        return f"HTTP {response.status_code} {response.reason}" + (f" ({code})" if code else "")
     return str(exc)[:160]
 
 

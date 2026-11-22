@@ -60,3 +60,35 @@ def set_halt(on: bool, actor: str, reason: str = "") -> bool:
 
 def snapshot() -> Dict[str, Any]:
     return {"mode": mode(), "halted": is_halted()}
+
+
+# User preferences: (default, parser, check, what the Settings page says when the check fails).
+PREFS = {
+    "paper_capital": ("1000000", int, lambda v: 100_000 <= v <= 100_000_000, "Account size must be between ₹1 lakh and ₹10 crore."),
+    "default_exit_rule": ("trail21", str, lambda v: v in ("trail21", "target"), "Unknown exit rule."),
+    "beginner_mode": ("1", str, lambda v: v in ("0", "1"), "Beginner hints must be on or off."),
+}
+
+
+def pref(key: str) -> Any:
+    default, parse, check, _ = PREFS[key]
+    try:
+        value = parse(_get(f"pref:{key}", default))
+        return value if check(value) else parse(default)
+    except Exception:
+        return parse(default)
+
+
+def set_pref(key: str, raw: str, actor: str) -> Any:
+    _, parse, check, problem = PREFS[key]
+    try:
+        value = parse(str(raw).strip().replace(",", ""))
+    except ValueError:
+        raise ValueError(problem)
+    if not check(value):
+        raise ValueError(problem)
+    old = pref(key)
+    if value != old:
+        _set(f"pref:{key}", str(value), actor)
+        audit.record("setting_changed", actor, "app_state", key, {"from": old, "to": value})
+    return value

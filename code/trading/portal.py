@@ -361,6 +361,42 @@ def _try_fill(t: Dict[str, Any], bars: pd.DataFrame):
     return bars, None
 
 
+def fill_pending_live(quotes: Dict[str, Dict[str, Any]], today: str) -> List[int]:
+    """Market-hours fills for waiting buy-stops, by the nightly rule applied to today's bar so far:
+    an order from an earlier day fills at the trigger, or at the open if it gapped through. An order
+    placed today fills at the trigger once the live price is at or above it.
+
+    ponytail: an order placed today while the price was already above its trigger fills at the
+    trigger, slightly optimistic; the exact fill needs tick data. A day that touched the stop is left
+    to the nightly settlement, which knows the order of the day's high and low no better.
+    """
+    filled = []
+    for t in get_trades(limit=100, status="pending"):
+        q = quotes.get(t["ticker"])
+        if t.get("kind") == "pair" or not q or q.get("stale") or q.get("simulated"):
+            continue
+        trigger, stop = float(t["entry_price"]), t.get("stop")
+        if stop is not None and float(q["day_low"]) <= stop:
+            continue
+        placed_today = str(t.get("created_at", ""))[:10] == today
+        if placed_today and float(q["ltp"]) < trigger:
+            continue
+        if float(q["day_high"]) < trigger:
+            continue
+        fill = trigger if placed_today else max(float(q["day_open"]), trigger)
+        conn = _conn()
+        try:
+            conn.execute(
+                "UPDATE paper_trades SET status='open', entry_price=?, entry_date=?, last_price=?, last_price_date=? WHERE id=? AND status='pending'",
+                (round(fill, 2), today, round(float(q["ltp"]), 2), today, t["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        filled.append(t["id"])
+    return filled
+
+
 def _set_status(trade_id: int, status: str, reason: str) -> None:
     conn = _conn()
     try:

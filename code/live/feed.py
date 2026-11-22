@@ -28,7 +28,8 @@ def valid(q: Quote) -> bool:
 
 class LiveFeed:
     def __init__(self, provider_fn: Callable[[], MarketDataProvider], symbols_fn: Callable[[], Iterable[str]],
-                 session: Callable[[], MarketSession] = market_session, stale_seconds: int = settings.QUOTE_STALE_SECONDS):
+                 session: Callable[[], MarketSession] = market_session, stale_seconds: int = settings.QUOTE_STALE_SECONDS,
+                 on_poll: Optional[Callable[[Dict[str, dict]], None]] = None):
         self.provider_fn = provider_fn
         self.symbols_fn = symbols_fn
         self.session = session
@@ -38,6 +39,7 @@ class LiveFeed:
         self.last_poll: Optional[datetime] = None
         self.last_error = ""
         self.provider_name = ""
+        self.on_poll = on_poll  # e.g. fill waiting paper orders; must never break the feed
 
     def poll_once(self, now: Optional[datetime] = None) -> int:
         provider = self.provider_fn()
@@ -57,6 +59,11 @@ class LiveFeed:
             else:
                 self.rejected[sym] = f"invalid print ₹{q.ltp}"
         self.last_poll = now or datetime.now(IST)
+        if self.on_poll:
+            try:
+                self.on_poll(self.view(now))
+            except Exception:
+                logger.exception("on_poll hook failed")
         return len(got)
 
     def is_stale(self, q: Quote, now: Optional[datetime] = None) -> bool:

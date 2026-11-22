@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Settings — Marketly{% endblock %}
+{% block extra_head %}
+<style>
+  .set-grid { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: start; }
+  .set-nav { position: sticky; top: calc(var(--nav-height) + 20px); display: flex; flex-direction: column; gap: 2px; }
+  .set-nav a { color: var(--muted); font-size: 14px; padding: 8px 10px; border-radius: 4px; }
+  .set-nav a:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
+  .row-set { display: grid; grid-template-columns: 1fr 260px; gap: 16px; padding: 14px 0; border-top: 1px solid var(--border); align-items: center; }
+  .row-set:first-of-type { border-top: none; }
+  .row-set .t { font-size: 14px; font-weight: 500; }
+  .row-set .d { font-size: 13px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+  .row-set input[type="text"], .row-set select { width: 100%; box-sizing: border-box; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 4px; }
+  .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; background: var(--border-strong); border-radius: 24px; transition: .15s; cursor: pointer; }
+  .switch span::before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: var(--text); border-radius: 50%; transition: .15s; }
+  .switch input:checked + span { background: var(--blue); }
+  .switch input:checked + span::before { transform: translateX(20px); }
+  .switch input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .flash { padding: 10px 14px; border-radius: 4px; font-size: 14px; margin-bottom: 16px; }
+  .flash.ok { background: var(--green-dim); color: var(--green); }
+  .flash.err { background: var(--red-dim); color: var(--red); }
+  .halt-box { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px; border-radius: var(--radius); border: 1px solid var(--border); }
+  .halt-box.on { border-color: var(--red); background: var(--red-dim); }
+  .halt-box .state { font-size: 16px; font-weight: 600; }
+  .btn-danger { background: var(--red); color: #fff; border: none; }
+  .kv { display: grid; grid-template-columns: 200px 1fr; gap: 0; font-size: 14px; }
+  .kv > div { padding: 9px 0; border-top: 1px solid var(--border); }
+  .kv > div:nth-child(-n+2) { border-top: none; }
+  .kv .k { color: var(--muted); }
+  .pillv { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border-strong); }
+  .pillv.good { color: var(--green); border-color: rgba(76,175,80,.4); } .pillv.bad { color: var(--red); border-color: rgba(229,83,75,.4); } .pillv.wait { color: var(--amber); border-color: rgba(212,160,61,.4); }
+  @media (max-width: 800px) {
+    .set-grid { grid-template-columns: 1fr; }
+    .set-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+    .row-set { grid-template-columns: 1fr; }
+    .kv { grid-template-columns: 1fr; }
+    .kv .k { border-top: 1px solid var(--border); padding-bottom: 0; }
+    .kv .v { border-top: none; padding-top: 2px; }
+    .halt-box { flex-direction: column; align-items: stretch; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{% if saved %}<div class="flash ok">✓ {{ saved }}</div>{% endif %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+<div class="set-grid">
+  <div class="set-nav" role="navigation" aria-label="Settings sections">
+    <a href="#trading">Paper trading</a>
+    <a href="#learning">Learning</a>
+    <a href="#safety">Safety</a>
+    <a href="#connections">Data &amp; connections</a>
+    <a href="#schedule">Schedule</a>
+  </div>
+  <div>
+    <form method="post" action="/settings">
+      <div class="card" id="trading">
+        <div class="label">Paper trading</div>
+        <div class="row-set">
+          <div><div class="t">Account size</div><div class="d">Paper money the app sizes positions against. Each trade risks the market posture's share of this (0.25–1%), and no position goes above 20% of it.</div></div>
+          <div><input type="text" name="paper_capital" inputmode="numeric" value="{{ capital|inr }}" aria-label="Account size in rupees"></div>
+        </div>
+        <div class="row-set">
+          <div><div class="t">Default exit rule</div><div class="d">What a new paper trade starts with. You can still change it per trade. In this app's backtest, letting winners run beat a fixed target.</div></div>
+          <div><select name="default_exit_rule" aria-label="Default exit rule">
+            <option value="trail21" {{ "selected" if exit_rule == "trail21" }}>Let it run (21-day exit)</option>
+            <option value="target" {{ "selected" if exit_rule == "target" }}>Fixed 2R target</option>
+          </select></div>
+        </div>
+      </div>
+      <div class="card" id="learning">
+        <div class="label">Learning</div>
+        <div class="row-set">
+          <div><div class="t">Beginner hints</div><div class="d">Step-by-step guide, plain-English explanations and tips in the Model Lab and on scores. Turn off once you know your way around.</div></div>
+          <div><label class="switch"><input type="checkbox" name="beginner_mode" value="1" {{ "checked" if beginner }}><span></span></label></div>
+        </div>
+      </div>
+      <div style="margin: -4px 0 16px;"><button class="btn" type="submit">Save settings</button></div>
+    </form>
+
+    <div class="card" id="safety">
+      <div class="label">Safety</div>
+      <form method="post" action="/settings">
+        <div class="halt-box {{ 'on' if halted }}">
+          <div>
+            <div class="state">{% if halted %}<span class="down">Trading is halted</span>{% else %}Trading is allowed{% endif %}</div>
+            <div class="d" style="color: var(--muted); font-size: 13px; margin-top: 4px;">The emergency halt blocks every new paper trade until you switch it off. Use it when data looks wrong or you want to stop and think. Every switch is written to the audit log.</div>
+          </div>
+          {% if halted %}
+          <button class="btn" type="submit" name="halt" value="0">Switch halt off</button>
+          {% else %}
+          <div style="display: flex; flex-direction: column; gap: 6px; min-width: 220px;">
+            <input type="text" name="reason" placeholder="Reason (optional)" aria-label="Reason for halting" style="background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 4px;">
+            <button class="btn btn-danger" type="submit" name="halt" value="1">Halt all trading</button>
+          </div>
+          {% endif %}
+        </div>
+      </form>
+      <div class="row-set" style="margin-top: 6px;">
+        <div><div class="t">Mode</div><div class="d">Marketly only paper trades. Real-money execution can't be switched on from settings; it would need a reviewed broker adapter and a code change.</div></div>
+        <div><span class="pillv good">{{ mode|replace("_", " ")|title }}</span></div>
+      </div>
+    </div>
+
+    <div class="card" id="connections">
+      <div class="label">Data &amp; connections</div>
+      <div class="kv">
+        <div class="k">Market</div><div class="v">{% if session.is_open %}<span class="pillv good">Open</span>{% else %}<span class="pillv">{{ session.holiday_name or session.phase|replace("_", " ")|title }}</span> · next open {{ session.next_open.strftime("%a %d %b, %I:%M %p") }}{% endif %}</div>
+        <div class="k">Live prices</div><div class="v">{{ {"yfinance_delayed": "Yahoo Finance 1-minute bars (about 30 s behind)", "broker": "Broker feed", "simulated": "Simulated (demo)"}.get(config.market_data_provider, config.market_data_provider) }}</div>
+        <div class="k">Daily data</div><div class="v">{% if meta.data_asof %}Last close {{ meta.data_asof|nicedate }} · built {{ meta.generated_at|nicetime }}{% else %}Not built yet{% endif %}</div>
+        <div class="k">AI setup review</div><div class="v">{{ {"openai": "OpenAI", "claude": "Claude (Anthropic)"}.get(ai.provider, ai.provider) }} · {% if ai.key_set %}<span class="pillv good">key set</span>{% else %}<span class="pillv bad">no API key</span>{% endif %}<div class="d" style="color: var(--muted); font-size: 12px; margin-top: 3px;">Change with MODEL_PROVIDER and the API key in .env (and Railway variables). If reviews say "out of credits", top up with the provider.</div></div>
+        <div class="k">Broker</div><div class="v">{{ config.broker|title }} · <a href="/broker">connect or check a broker ›</a></div>
+        <div class="k">Alerts</div><div class="v">Telegram {{ config.telegram }} · phone push {{ config.web_push }}</div>
+      </div>
+    </div>
+
+    <div class="card" id="schedule">
+      <div class="label">Schedule</div>
+      <div class="kv">
+        {% for j in jobs %}<div class="k">{{ j.name }}</div><div class="v">next {{ j.next.strftime("%a %d %b, %I:%M %p") }}</div>{% else %}<div class="k">Jobs</div><div class="v">The scheduler isn't running in this process.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+from functools import lru_cache
 import subprocess
 import sys
 import hmac
@@ -12,6 +13,7 @@ import re
 import secrets
 import sqlite3
 import time
+from urllib.parse import quote
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,7 +23,7 @@ from zoneinfo import ZoneInfo
 import bcrypt
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import Body, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -43,11 +45,13 @@ from code.evaluator.memo import _init_db as init_memo_db
 from code.evaluator.stock_review import cached_review, get_review, latest_signal
 from code.pipeline.news_rss import fetch_company_news, fetch_news_items
 from code.pipeline.nightly_pipeline import kite_fetch
+from code.signals.live_rules import ROUTINE, day_phase, position_signal, sell_level_signal, setup_signal, short_signal
 from code.signals.minervini.setup import stock_metrics
 from code.trading.portal import (
-    close_trade, delete_all_closed, delete_trade, get_scorecard, get_trade_stats, get_trades, place_trade, set_note,
+    close_trade, delete_all_closed, delete_trade, fill_pending_live, get_scorecard, get_trade_stats, get_trades, place_trade, set_note,
 )
-from code.trading.predict import predict_stock
+from code.trading import model_lab
+from code.trading.predict import portfolio_outlook, position_view, predict_stock
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -83,9 +87,26 @@ def _ticker_directory() -> List[Dict[str, str]]:
     return _TICKER_DIRECTORY_CACHE
 
 
+def _market_pill() -> Dict[str, str]:
+    """Navbar status: open with time to close, or closed with the next open."""
+    s = market_session().state()
+    if s.is_open:
+        return {"cls": "open", "text": "Market open", "sub": "closes 3:30 pm"}
+    if s.phase == "PRE_OPEN":
+        return {"cls": "pre", "text": "Pre-open", "sub": "opens 9:15 am"}
+    nxt = s.next_open
+    when = "today" if nxt.date() == s.now.date() else "tomorrow" if (nxt.date() - s.now.date()).days == 1 else f"{nxt:%a}"
+    return {"cls": "closed", "text": s.holiday_name or "Market closed", "sub": f"opens {when} 9:15 am"}
+
+
 def _template_globals(request: Request) -> Dict[str, Any]:
     nifty = (_load_latest_snapshot().get("indices") or {}).get("nifty") or {}
-    return {"csp_nonce": getattr(request.state, "csp_nonce", ""), "nav_nifty": nifty}
+    try:
+        halted, beginner, pill = live_state.is_halted(), live_state.pref("beginner_mode") == "1", _market_pill()
+    except Exception:  # a page must render even if the state database is unavailable
+        halted, beginner, pill = False, True, None
+    return {"csp_nonce": getattr(request.state, "csp_nonce", ""), "nav_nifty": nifty,
+            "halted": halted, "beginner": beginner, "market_pill": pill}
 
 
 TEMPLATES = Jinja2Templates(directory=str(ROOT / "templates"), context_processors=[_template_globals])
@@ -114,6 +135,18 @@ def _nice_date(value: Any, with_time: bool = False) -> str:
 TEMPLATES.env.filters["sym"] = _sym
 TEMPLATES.env.filters["nicedate"] = _nice_date
 TEMPLATES.env.filters["nicetime"] = lambda v: _nice_date(v, with_time=True)
+
+
+def _inr(v: float) -> str:
+    """Indian digit grouping: 1000000 -> 10,00,000."""
+    s = str(int(round(v)))
+    head, tail = s[:-3], s[-3:]
+    while len(head) > 2:
+        tail, head = head[-2:] + "," + tail, head[:-2]
+    return (head + "," + tail) if head else tail
+
+
+TEMPLATES.env.filters["inr"] = _inr
 
 
 def _normalize_ticker(raw: str) -> str:
@@ -377,7 +410,8 @@ def _freshness_labels(snapshot: Dict[str, Any]) -> Dict[str, Optional[str]]:
     """
     meta = snapshot.get("meta", {})
     generated_at = meta.get("generated_at")
-    base = {"market_data_label": None, "analysis_age_label": None, "generated_at": generated_at, "data_asof": meta.get("data_asof")}
+    base = {"market_data_label": None, "analysis_age_label": None, "generated_at": generated_at, "data_asof": meta.get("data_asof"),
+            "market_open": market_session().state().is_open}
     if not generated_at:
         return base
     try:
@@ -651,7 +685,8 @@ async def lifespan(_app: FastAPI):
     scheduler.shutdown(wait=False)
 
 
-PUBLIC_AUTH_PATHS = {"/login", "/logout", "/healthz"}
+# /api/daily/sync skips the PIN session but has its own token check (laptop -> Railway, no browser)
+PUBLIC_AUTH_PATHS = {"/login", "/logout", "/healthz", "/api/daily/sync"}
 
 
 class SessionAuthMiddleware(BaseHTTPMiddleware):
@@ -945,8 +980,12 @@ async def home(request: Request) -> HTMLResponse:
             "posture": _posture(snapshot),
             "briefing": snapshot.get("briefing", {}).get("items", []),
             "setups": setups,
+            "shorts": snapshot.get("shorts", []),
+            "sells": snapshot.get("sells", []),
             "watchlist_rows": _build_watchlist_section(screen_items, previous_snapshot),
             "stale": _snapshot_is_stale(snapshot),
+            "routine": ROUTINE,
+            "routine_now": day_phase(datetime.now(IST), market_session().is_trading_day(datetime.now(IST).date())),
             "active_tab": "today",
             **_freshness_labels(snapshot),
         },
@@ -995,7 +1034,7 @@ async def stock_room(asset: str, request: Request) -> HTMLResponse:
     results = snapshot.get("results") or {}
     results_date = results[asset] if asset in results else (await asyncio.to_thread(fetch_next_results, [asset])).get(asset)
     posture = _posture(snapshot)
-    plan = predict_stock(asset, df, risk_pct=posture["risk_pct"], results_date=results_date)
+    plan = predict_stock(asset, df, risk_pct=posture["risk_pct"], results_date=results_date, setup=(screen_item or {}).get("setup"))
     signal = latest_signal(asset, df)
     review = cached_review(asset, snapshot)
 
@@ -1173,9 +1212,28 @@ def _live_symbols() -> List[str]:
     snapshot = _load_latest_snapshot()
     syms = [NIFTY_LIVE] + list(_RECENT_VIEWED) + list(_get_watchlist_symbols())
     syms += [a["symbol"] for a in snapshot.get("action_queue", []) if a.get("kind") == "stock"]
+    syms += [r["symbol"] for r in snapshot.get("shorts", [])]
     syms += [p["symbol"] for p in snapshot.get("predictions", []) if p.get("kind") == "stock" and p.get("tradeable")]
     syms += [t["ticker"] for t in get_trades(limit=100, status="open") + get_trades(limit=100, status="pending") if t.get("kind") != "pair"]
+    syms += [s + ".NS" for s in _daily_symbols()]
     return list(dict.fromkeys(syms))
+
+
+def _daily_symbols() -> List[str]:
+    """Tonight's daily-loop corpus and both books' stocks, so they get live prices tomorrow."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            a = conn.execute("SELECT MAX(asof) FROM daily_predictions").fetchone()[0]
+            if not a:
+                return []
+            rows = conn.execute("SELECT symbol FROM daily_predictions WHERE asof = ? UNION "
+                                "SELECT symbol FROM daily_plan WHERE asof = ?", (a, a)).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return []
 
 
 _SIMULATED: Optional[SimulatedProvider] = None
@@ -1198,7 +1256,17 @@ def _live_provider():
     return _SIMULATED
 
 
-LIVE_FEED = LiveFeed(_live_provider, _live_symbols)
+def _fill_on_poll(quotes: Dict[str, dict]) -> None:
+    """Waiting paper orders fill during market hours, not only at the 18:30 settlement."""
+    st = market_session().state()
+    if not st.is_open or live_state.is_halted():
+        return
+    for trade_id in fill_pending_live(quotes, st.now.date().isoformat()):
+        live_audit.record("paper_fill_live", "system", "paper_trades", trade_id, {"source": LIVE_FEED.provider_name})
+        logger.info("paper order %s filled live", trade_id)
+
+
+LIVE_FEED = LiveFeed(_live_provider, _live_symbols, on_poll=_fill_on_poll)
 
 
 @app.get("/api/quotes")
@@ -1212,7 +1280,28 @@ async def api_quotes() -> JSONResponse:
         "error": LIVE_FEED.last_error,
         "quotes": LIVE_FEED.view(),
         "rejected": LIVE_FEED.rejected,
+        **_live_guidance(LIVE_FEED.view()),
     })
+
+
+def _live_guidance(quotes: Dict[str, dict], now: Optional[datetime] = None) -> Dict[str, Any]:
+    """What to do right now, per setup (by symbol) and per open paper position (by trade id).
+    Stale quotes get no guidance: acting on an old price is worse than not acting."""
+    now = now or datetime.now(IST)
+    fresh = {s: q for s, q in quotes.items() if not q.get("stale")}
+    snapshot = _load_latest_snapshot()
+    wanted = {a["symbol"] for a in snapshot.get("action_queue", []) if a.get("kind") == "stock"}
+    signals = {p["symbol"]: setup_signal(p, fresh[p["symbol"]], now) for p in snapshot.get("predictions", [])
+               if p.get("kind") == "stock" and p["symbol"] in fresh and (p["symbol"] in wanted or p.get("tradeable"))}
+    signals.update({f"short:{r['symbol']}": short_signal(r, fresh[r["symbol"]], now)
+                    for r in snapshot.get("shorts", []) if r["symbol"] in fresh})
+    for r in snapshot.get("sells", []):
+        g = sell_level_signal(r, fresh[r["symbol"]]["ltp"]) if r["symbol"] in fresh else None
+        if g:
+            signals[f"sell:{r['symbol']}"] = g
+    positions = {str(t["id"]): position_signal(t, fresh[t["ticker"]]["ltp"]) for t in get_trades(limit=100, status="open")
+                 if t.get("kind") != "pair" and t["ticker"] in fresh}
+    return {"signals": signals, "positions": positions}
 
 
 @app.get("/broker", response_class=HTMLResponse)
@@ -1381,6 +1470,36 @@ async def predictions(request: Request) -> HTMLResponse:
     for p in preds:
         p["held"] = p["symbol"] in held
 
+    def _views():
+        views, held_dfs = {}, []
+        for t in open_trades + pending:
+            if t.get("kind") == "pair":
+                continue
+            try:
+                df = _drop_incomplete_ohlcv_rows(kite_fetch(t["ticker"]))
+                view = position_view(t, df, (_find_screen_item(snapshot, t["ticker"]) or {}).get("setup")) if not df.empty else None
+            except Exception:
+                logger.exception("position view failed for %s", t["ticker"])
+                view = None
+            if view:
+                views[str(t["id"])] = view
+                if t["status"] == "open":
+                    held_dfs.append((t, df))
+        try:
+            outlook = portfolio_outlook(held_dfs, live_state.pref("paper_capital"))
+        except Exception:
+            logger.exception("portfolio outlook failed")
+            outlook = {"n": len(held_dfs)}
+        return views, outlook
+    position_views, outlook = await asyncio.to_thread(_views)
+
+    # Tomorrow: every position and order, then new buys that fit the free slots.
+    tomorrow = [{"symbol": t["ticker"], "id": t["id"], **position_views[str(t["id"])]["tomorrow"]}
+                for t in open_trades + pending if position_views.get(str(t["id"]), {}).get("tomorrow")]
+    free_slots = max(0, posture["max_positions"] - len(open_trades) - len(pending))
+    ideas = sorted((p for p in preds if p.get("kind") == "stock" and p.get("tradeable") and p["symbol"] not in held and not p.get("searched")),
+                   key=lambda p: p.get("rs_rank") or 0, reverse=True)[:free_slots]
+
     return TEMPLATES.TemplateResponse(
         request,
         "predictions.html",
@@ -1396,8 +1515,15 @@ async def predictions(request: Request) -> HTMLResponse:
             "search": search,
             "search_error": search_error,
             "stats": get_trade_stats(),
+            "capital": live_state.pref("paper_capital"),
+            "exit_rule_default": live_state.pref("default_exit_rule"),
             "scorecard": get_scorecard(),
             "open_trades": open_trades,
+            "position_views": position_views,
+            "outlook": outlook,
+            "tomorrow": tomorrow,
+            "ideas": ideas,
+            "free_slots": free_slots,
             "pending_trades": pending,
             "closed_trades": get_trades(limit=30, status="closed") + get_trades(limit=10, status="expired"),
             "generated_at": snapshot.get("meta", {}).get("generated_at"),
@@ -1405,6 +1531,244 @@ async def predictions(request: Request) -> HTMLResponse:
             **_freshness_labels(snapshot),
         },
     )
+
+
+def _lab_symbols() -> List[str]:
+    """What the lab offers first: paper positions (open, then waiting), then the watchlist."""
+    trades = get_trades(limit=100, status="open") + get_trades(limit=100, status="pending")
+    return list(dict.fromkeys([t["ticker"] for t in trades if t.get("kind") != "pair"] + list(_get_watchlist_symbols())))
+
+
+def _lab_row(r: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: r[k] for k in ("name", "graph", "select", "report", "select_span", "report_span", "forecast")}
+
+
+@app.get("/lab", response_class=HTMLResponse)
+async def lab_page(request: Request) -> HTMLResponse:
+    snapshot = _load_latest_snapshot()
+    held = {t["ticker"] for t in get_trades(limit=100, status="open") + get_trades(limit=100, status="pending")}
+    symbols = _lab_symbols()
+    symbol = _normalize_ticker(request.query_params.get("symbol", "")) if request.query_params.get("symbol") else (symbols[0] if symbols else "RELIANCE.NS")
+    return TEMPLATES.TemplateResponse(request, "lab.html", {
+        "active_tab": "lab", "symbol": symbol, "symbols": symbols, "held": held,
+        "node_types": model_lab.NODE_TYPES, "presets": [{"name": n, "graph": g} for n, g in model_lab.PRESETS],
+        "horizon": model_lab.HORIZON, "stale": _snapshot_is_stale(snapshot), **_freshness_labels(snapshot),
+    })
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request) -> HTMLResponse:
+    from code.app import config as app_config
+    snapshot = _load_latest_snapshot()
+    provider = app_config.MODEL_PROVIDER
+    key_set = bool(os.getenv("OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"))
+    jobs = sorted(({"name": j.name, "next": j.next_run_time} for j in scheduler.get_jobs() if j.next_run_time), key=lambda j: j["next"])
+    return TEMPLATES.TemplateResponse(request, "settings.html", {
+        "active_tab": "settings", "saved": request.query_params.get("saved"), "error": request.query_params.get("error"),
+        "capital": live_state.pref("paper_capital"), "exit_rule": live_state.pref("default_exit_rule"),
+        "mode": live_state.mode(), "config": settings.summary(), "session": market_session().state(),
+        "ai": {"provider": provider, "key_set": key_set}, "jobs": jobs, "meta": snapshot.get("meta", {}),
+        "stale": _snapshot_is_stale(snapshot), **_freshness_labels(snapshot),
+    })
+
+
+@app.post("/settings")
+async def settings_save(request: Request) -> RedirectResponse:
+    form = await request.form()
+    try:
+        if "halt" in form:
+            live_state.set_halt(form["halt"] == "1", actor="papa", reason=str(form.get("reason", ""))[:200])
+            return RedirectResponse("/settings?saved=" + quote("Trading halted" if form["halt"] == "1" else "Halt switched off"), status_code=303)
+        live_state.set_pref("paper_capital", str(form.get("paper_capital", "")), actor="papa")
+        live_state.set_pref("default_exit_rule", str(form.get("default_exit_rule", "")), actor="papa")
+        live_state.set_pref("beginner_mode", "1" if form.get("beginner_mode") else "0", actor="papa")
+    except ValueError as exc:
+        return RedirectResponse(f"/settings?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/settings?saved=" + quote("Settings saved"), status_code=303)
+
+
+@app.get("/api/lab/recommend/{symbol}")
+async def lab_recommend(symbol: str) -> JSONResponse:
+    symbol = _normalize_ticker(symbol)
+    rec = await asyncio.to_thread(model_lab.recommend_for, symbol)
+    if not rec or not rec["best"]:
+        return JSONResponse({"symbol": symbol, "error": "Not enough price history to backtest this stock (needs about 2½ years)."})
+    return JSONResponse({"symbol": symbol, "best": _lab_row(rec["best"]), "baseline": _lab_row(rec["baseline"]) if rec["baseline"] else None,
+                         "ranking": [_lab_row(r) for r in rec["ranking"]]})
+
+
+@app.get("/api/lab/updown/{symbol}")
+async def lab_updown(symbol: str) -> JSONResponse:
+    """Chance up in 5 sessions, precomputed by code/research/updown.py, with its unseen-data record."""
+    from code.research.updown import OUT
+    symbol = _normalize_ticker(symbol)
+    try:
+        data = json.loads(OUT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return JSONResponse({"symbol": symbol, "error": "The up/down score hasn't been built yet."})
+    stock = data["stocks"].get(symbol.removesuffix(".NS"))
+    return JSONResponse({"symbol": symbol, "stock": stock, **{k: data[k] for k in
+                         ("asof", "question", "period", "no_edge_auc", "overall", "by_grade", "ranking", "ranked_today")}})
+
+
+@lru_cache(maxsize=1)
+def _replay_data(stamp: float) -> Dict[str, Any]:
+    """Replay file + per-week record per model, cached until the file changes (stamp = mtime)."""
+    from code.research import model_search as ms
+    df = ms.replay_load()
+    models = [m for m in ("current", "best") if m in df.columns]
+    return {"df": df, "weeks": {m: ms.replay_weeks(df, m) for m in models}}
+
+
+@app.get("/lab/replay", response_class=HTMLResponse)
+async def replay_page(request: Request) -> HTMLResponse:
+    snapshot = _load_latest_snapshot()
+    return TEMPLATES.TemplateResponse(request, "replay.html", {
+        "active_tab": "lab", "stale": _snapshot_is_stale(snapshot), **_freshness_labels(snapshot)})
+
+
+@app.get("/daily", response_class=HTMLResponse)
+async def daily_page(request: Request) -> HTMLResponse:
+    snapshot = _load_latest_snapshot()
+    return TEMPLATES.TemplateResponse(request, "daily.html", {
+        "active_tab": "lab", "stale": _snapshot_is_stale(snapshot), **_freshness_labels(snapshot)})
+
+
+@app.get("/api/daily")
+async def api_daily() -> JSONResponse:
+    """Daily loop: latest calls and plans, last scored day, the ₹10,000 ledger, miss patterns."""
+    from code.research import daily as dl
+    try:
+        conn = dl.connect(DB_PATH)
+        try:
+            data = dl.report(conn)                      # the laptop, where the loop runs
+            if data is None:                            # Railway: the laptop's last pushed copy
+                row = conn.execute("SELECT body, received_at FROM daily_export WHERE id = 1").fetchone() \
+                    if conn.execute("SELECT name FROM sqlite_master WHERE name = 'daily_export'").fetchone() else None
+                if row is None:
+                    return JSONResponse({"error": "The daily loop hasn't run yet. It runs on the laptop each evening and sends its results here."})
+                data = {**json.loads(row["body"]), "synced_at": row["received_at"]}
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("daily report failed")
+        return JSONResponse({"error": "Couldn't read the daily loop's results."})
+    return JSONResponse({**data, "provider": LIVE_FEED.provider_name or settings.MARKET_DATA_PROVIDER})
+
+
+DAILY_SYNC_MAX_BYTES = 8_000_000
+
+
+@app.post("/api/daily/sync")
+async def api_daily_sync(request: Request) -> JSONResponse:
+    """The laptop pushes each night's daily-loop report here (token in X-Sync-Token)."""
+    token = os.getenv("DAILY_SYNC_TOKEN")
+    given = request.headers.get("x-sync-token", "")
+    if not token or not hmac.compare_digest(given.encode(), token.encode()):
+        return JSONResponse({"detail": "Not authorised"}, status_code=403)
+    body = await request.body()
+    if len(body) > DAILY_SYNC_MAX_BYTES:
+        return JSONResponse({"detail": "Too large"}, status_code=413)
+    try:
+        data = json.loads(body)
+        if not isinstance(data, dict) or not {"summary", "predictions", "ledger"} <= set(data):
+            raise ValueError("missing keys")
+    except ValueError:
+        return JSONResponse({"detail": "Not a daily report"}, status_code=400)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS daily_export (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT, received_at TEXT)")
+        conn.execute("INSERT OR REPLACE INTO daily_export VALUES (1, ?, ?)", (body.decode("utf-8"), datetime.now().isoformat(timespec="seconds")))
+        conn.commit()
+    finally:
+        conn.close()
+    return JSONResponse({"ok": True, "predictions": len(data["predictions"]), "ledger_rows": len(data["ledger"])})
+
+
+@app.get("/api/daily/live")
+async def api_daily_live() -> JSONResponse:
+    """Live prices for tonight's calls, so the page can cross out calls going wrong during the day."""
+    view = LIVE_FEED.view()
+    return JSONResponse({"provider": LIVE_FEED.provider_name or settings.MARKET_DATA_PROVIDER,
+                         "open": market_session().state().is_open,
+                         "quotes": {s.removesuffix(".NS"): q for s, q in view.items()}})
+
+
+@app.get("/api/lab/zoo")
+async def lab_zoo(horizon: int = 1) -> JSONResponse:
+    """Model Zoo results for a horizon, precomputed by code/research/zoo.py."""
+    path = DATA_ROOT / f"zoo_h{int(horizon)}.json"
+    try:
+        return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return JSONResponse({"error": f"The {int(horizon)}-session Model Zoo hasn't been run yet."})
+
+
+@app.get("/api/lab/portfolio")
+async def lab_portfolio() -> JSONResponse:
+    """Phase 1 portfolio test, precomputed by code/research/portfolio.py."""
+    from code.research.portfolio import OUT
+    try:
+        return JSONResponse(json.loads(OUT.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return JSONResponse({"error": "The portfolio test hasn't been run yet."})
+
+
+@app.get("/api/lab/replay")
+async def lab_replay(date: str = "", model: str = "") -> JSONResponse:
+    from code.research import model_search as ms
+    try:
+        search = json.loads(ms.OUT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        search = None
+    if not ms.REPLAY.exists():
+        return JSONResponse({"error": "Replay data hasn't been built on this machine yet.", "search": search})
+    try:
+        data = _replay_data(ms.REPLAY.stat().st_mtime)
+        if model not in data["weeks"]:
+            model = "best" if "best" in data["weeks"] else "current"     # open on the search winner
+        weeks = data["weeks"][model]
+        day = ms.replay_day(data["df"], weeks, model, date or str(weeks.index.max().date()))
+    except Exception:
+        logger.exception("replay failed")
+        return JSONResponse({"error": "Couldn't replay that date.", "search": search})
+    return JSONResponse({"model": model, "models": list(data["weeks"]), "day": day, "search": search})
+
+
+@app.post("/api/lab/run")
+async def lab_run(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    symbol = _normalize_ticker(str(payload.get("symbol", "")))
+    df = await asyncio.to_thread(model_lab.load_prices, symbol)
+    if df.empty:
+        return JSONResponse({"error": f"No price history for {symbol}."}, status_code=404)
+    try:
+        bt = await asyncio.to_thread(model_lab.backtest, payload.get("graph") or {}, df)
+    except ValueError as exc:  # an unfinished model is a normal state while building, not a failed request
+        return JSONResponse({"error": str(exc)})
+    tail = df.iloc[-90:]
+    candles = [[int(pd.Timestamp(t).normalize().timestamp()), round(float(r.open), 2), round(float(r.high), 2), round(float(r.low), 2), round(float(r.close), 2)]
+               for t, r in tail.iterrows()]
+    return JSONResponse({"symbol": symbol, "candles": candles, **bt})
+
+
+@app.get("/api/lab/models")
+async def lab_models() -> JSONResponse:
+    return JSONResponse(model_lab.list_models())
+
+
+@app.post("/api/lab/models")
+async def lab_save(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    try:
+        model_id = model_lab.save_model(str(payload.get("name", "")), payload.get("graph") or {})
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"id": model_id})
+
+
+@app.post("/api/lab/models/{model_id}/delete")
+async def lab_delete(model_id: int) -> JSONResponse:
+    model_lab.delete_model(model_id)
+    return JSONResponse({"status": "deleted"})
 
 
 @app.post("/api/place-trade")
@@ -1419,6 +1783,8 @@ async def api_place_trade(symbol: str = Form(...), qty: int = Form(0), exit_rule
         return JSONResponse({"status": "error", "msg": "That setup is no longer in today's list."}, status_code=404)
     if not pred.get("tradeable", True):
         return JSONResponse({"status": "error", "msg": "Not a valid entry right now — wait for a proper base and pivot."}, status_code=400)
+    if live_state.is_halted():
+        return JSONResponse({"status": "error", "msg": "Trading is halted. Switch the halt off in Settings to place trades."}, status_code=409)
     qty = qty if qty > 0 else pred["qty"]
     result = place_trade(
         pred["symbol"], pred["side"], pred["entry"], "pairs" if pred["kind"] == "pair" else "minervini",
@@ -1458,7 +1824,8 @@ def _live_prediction(ticker: str, snapshot: Dict[str, Any]) -> Optional[Dict[str
         return None
     results = snapshot.get("results") or {}
     results_date = results[ticker] if ticker in results else fetch_next_results([ticker]).get(ticker)
-    pred = predict_stock(ticker, df, "Your search", risk_pct=_posture(snapshot)["risk_pct"], results_date=results_date)
+    pred = predict_stock(ticker, df, "Your search", risk_pct=_posture(snapshot)["risk_pct"], results_date=results_date,
+                         setup=(_find_screen_item(snapshot, ticker) or {}).get("setup"))
     if pred:
         pred.update(link=f"/stock/{ticker}", source="search", rs_rank=None, on_watchlist=False)
     return pred
