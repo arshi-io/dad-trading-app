@@ -332,17 +332,23 @@ def main() -> None:
     horizon = int(sys.argv[sys.argv.index("--horizon") + 1]) if "--horizon" in sys.argv else u.HORIZON
     df = load_features(horizon)
     logger.info("%d stock-days loaded, horizon %d sessions", len(df), horizon)
-    result = search(df, horizon=horizon)
+    # --valid FROM:TO chooses on a recent window instead (the daily loop's retrain); the "locked" check is then
+    # whatever comes after TO, which may be only days
+    valid, locked_from = VALID, LOCKED
+    if "--valid" in sys.argv:
+        frm, to = sys.argv[sys.argv.index("--valid") + 1].split(":")
+        valid, locked_from = (frm, to), to
+    result = search(df, valid=valid, horizon=horizon)
     best = result["best"]
     # replay: the winner from the start of the choosing period on (2021-23 helped choose it; 2024+ did not)
-    locked, pb = locked_test(df, best, horizon=horizon)
+    locked, pb = locked_test(df, best, locked=locked_from, horizon=horizon)
     choose = result["preds"][best["key"]]
     if horizon == u.HORIZON:
         scored = pd.read_parquet(u.SCORED) if u.SCORED.exists() else None
         write_replay(pd.concat([choose, pb]), scored)
     else:
         add_rank_column(pd.concat([choose, pb]), f"best_h{horizon}")
-    d = save(result, locked, horizon=horizon)
+    d = save(result, locked, valid=valid, horizon=horizon)
     print(f"\nbest: {d['best']['key']}  IC {d['best']['ic']:+.4f} on {d['valid'][0][:4]}-2023 "
           f"(live model {d['baseline']['ic']:+.4f})")
     print(f"2024+ locked test: best IC {locked['best']['ic']:+.4f} spread {locked['best']['spread']:+.2%} | "

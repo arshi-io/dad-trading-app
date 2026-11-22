@@ -62,10 +62,27 @@ def test_settle_crosses_out_wrong_calls_and_books_intraday_pnl(conn):
     assert p["AAA"]["right"] == 1 and p["DDD"]["right"] == 0           # DDD called BEAT, lagged: crossed out
     assert p["AAA"]["in_range"] == 0 and p["BBB"]["in_range"] == 1       # AAA closed 110, range 95-105
     led = conn.execute("SELECT * FROM daily_ledger WHERE book = 'A'").fetchone()
-    sh = int((dl.START_CASH / dl.N_A) // (100 * (1 + dl.SLIP_A)))
+    sh = int((dl.START_CASH / dl.N_A) // 100)
     buy, sell = 100 * (1 + dl.SLIP_A), 110 * (1 - dl.SLIP_A)
     expect = sh * (sell - buy) - dl.intraday_charges(sh * buy, sh * sell)
     assert led["pnl"] == pytest.approx(expect) and led["end_value"] == pytest.approx(dl.START_CASH + expect)
+
+
+def test_a_short_earns_when_the_stock_falls_and_pays_the_same_charges(conn):
+    w = _w([[100] * 4, [100, 200, 100, 100], [100] * 4], [[100] * 4, [90, 220, 100, 100], [100] * 4])
+    a = "2026-01-05"
+    conn.execute("INSERT INTO daily_plan VALUES (?,?,?,?,?,?,?,?)", (a, "AS", "AAA", "SHORT_OPEN_COVER_CLOSE", 20, 100, 0, 0))
+    conn.execute("INSERT INTO daily_plan VALUES (?,?,?,?,?,?,?,?)", (a, "ALS", "AAA", "SHORT_OPEN_COVER_CLOSE", 20, 100, 0, 0))
+    conn.execute("INSERT INTO daily_plan VALUES (?,?,?,?,?,?,?,?)", (a, "ALS", "BBB", "BUY_OPEN_SELL_CLOSE", 10, 200, 1, 0))
+    dl.settle_day(conn, w, DAYS[0], DAYS[1], 0)
+    led = {r["book"]: r for r in conn.execute("SELECT * FROM daily_ledger")}
+    sell, buy = 20 * 100 * (1 - dl.SLIP_A), 20 * 90 * (1 + dl.SLIP_A)          # short at 100, cover at 90
+    short_pnl = sell - buy - dl.intraday_charges(buy, sell)
+    assert led["AS"]["pnl"] == pytest.approx(short_pnl) and short_pnl > 190
+    b_buy, b_sell = 10 * 200 * (1 + dl.SLIP_A), 10 * 220 * (1 - dl.SLIP_A)
+    assert led["ALS"]["pnl"] == pytest.approx(short_pnl + b_sell - b_buy - dl.intraday_charges(b_buy, b_sell))
+    sides = [r["side"] for r in conn.execute("SELECT side FROM daily_trades WHERE book = 'AS'")]
+    assert sides == ["SHORT", "COVER"]
 
 
 def test_book_b_buys_at_open_and_marks_at_close(conn):
@@ -110,6 +127,66 @@ def test_sync_endpoint_needs_the_token_and_serves_the_pushed_report(monkeypatch,
     monkeypatch.setattr(main, "APP_PIN_HASH", None)
     got = client.get("/api/daily").json()
     assert got["predictions"][0]["symbol"] == "AAA" and "synced_at" in got
+
+
+def test_missing_trading_days_are_found_and_holidays_are_not(tmp_path, monkeypatch):
+    hol = tmp_path / "h.json"
+    hol.write_text('{"holidays": {"2026-10-20": "Dussehra"}}', encoding="utf-8")
+    monkeypatch.setattr(dl, "HOLIDAYS", hol)
+    have = pd.DatetimeIndex(["2026-10-14", "2026-10-19", "2026-10-21"])
+    assert dl.missing_sessions(have, pd.Timestamp("2026-10-14"), pd.Timestamp("2026-10-21")) == ["2026-10-15", "2026-10-16"]
+    # a year the holiday list doesn't cover is not judged (its holidays would look like holes)
+    assert dl.missing_sessions(have, pd.Timestamp("2025-12-24"), pd.Timestamp("2026-10-14")) == \
+        dl.missing_sessions(have, pd.Timestamp("2026-01-01"), pd.Timestamp("2026-10-14"))
+
+
+def _ledger(conn, book, rets, nifty, start="2026-01-01"):
+    days = pd.bdate_range(start, periods=len(rets))
+    v = 10000.0
+    for d, r, n in zip(days, rets, nifty):
+        conn.execute("INSERT OR REPLACE INTO daily_ledger VALUES (?,?,?,?,?,?,?,?)",
+                     (d.strftime("%Y-%m-%d"), book, v, v * (1 + r), v * r, 0, n, 1))
+        v *= 1 + r
+    return [d.strftime("%Y-%m-%d") for d in days]
+
+
+def test_governor_follows_the_book_that_beats_nifty_and_penalises_trailing(conn):
+    nifty = [0.001] * 20
+    days = _ledger(conn, "A", [0.004] * 20, nifty)            # beats Nifty every day
+    _ledger(conn, "AS", [0.008, -0.006] * 10, nifty)          # same total excess, but trails on half the days
+    _ledger(conn, "N", nifty, nifty)
+    sc = dl.scores(conn, days[-1])
+    assert sc["N"]["score"] == pytest.approx(0) and sc["A"]["penalty"] == 0
+    assert sc["AS"]["penalty"] > 0 and sc["A"]["score"] > sc["AS"]["score"]
+    g = dl.decide(conn, days[-1], 1)
+    assert g["champion"] == "A"
+
+
+def test_governor_holds_nifty_when_everything_trails_it(conn):
+    nifty = [0.002] * 20
+    days = _ledger(conn, "A", [0.001] * 20, nifty)
+    _ledger(conn, "N", nifty, nifty)
+    assert dl.decide(conn, days[-1], 1)["champion"] == "N"
+
+
+def test_main_book_uses_the_pick_made_the_evening_before(conn, monkeypatch):
+    monkeypatch.setattr(dl, "GOVERNOR_ON", True)                 # paused in production, still tested
+    nifty = [0.0] * 3
+    days = _ledger(conn, "A", [0.0, 0.0, 0.05], nifty)
+    _ledger(conn, "AS", [0.0, 0.0, -0.05], nifty)
+    conn.execute("INSERT INTO daily_governor VALUES (?,?,?,?,?,?,?)", (days[1], "AS", 1, "", "{}", 0, 1))
+    dl.settle_nifty_and_main(conn, days[1], days[2], 0.0, 1)
+    m = conn.execute("SELECT pnl FROM daily_ledger WHERE book = 'M' AND date = ?", (days[2],)).fetchone()[0]
+    assert m == pytest.approx(10000 * (-0.05 - dl.SWITCH_COST))     # followed AS (picked before), paid the switch
+
+
+def test_position_book_daily_exit_and_stop():
+    r20 = pd.Series({"UP": 0.9, "MID": 0.45, "STOP": 0.9, "OK": 0.75})
+    close = {"UP": 100, "MID": 100, "STOP": 94, "OK": 100}
+    entry = {"UP": 90, "MID": 100, "STOP": 100, "OK": 100}
+    held = {s: 1 for s in r20.index}
+    assert dl.b_keep(held, r20, close, entry, full=False) == ["UP", "OK"]      # MID slipped, STOP hit -5%
+    assert dl.b_keep(held, r20, close, entry, full=True) == ["UP", "OK"]       # OK still in the top 30%
 
 
 def test_fit_only_uses_outcomes_settled_by_the_evening(monkeypatch):

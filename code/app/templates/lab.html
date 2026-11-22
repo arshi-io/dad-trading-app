@@ -155,8 +155,12 @@
   .ud-table td, .ud-table th { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--border); }
   .ud-table td:first-child, .ud-table th:first-child { text-align: left; }
   .ud-table th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
-  .range-text { font-size: 15px; line-height: 1.6; margin-top: 8px; }
-  .range-text b { color: var(--amber); font-weight: 600; }
+  .range-text { font-size: 13px; line-height: 1.6; margin-top: 6px; color: var(--muted); }
+  .range-text b { color: var(--muted); font-weight: 600; }
+  .point { margin-top: 10px; }
+  .point .px { font-size: 30px; font-weight: 600; }
+  .point .row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .point .why { font-size: 14px; line-height: 1.7; margin-top: 4px; }
   .track-text { font-size: 14px; line-height: 1.7; margin: 6px 0 8px; }
   .track-text .word { font-weight: 600; } .track-text .up { color: var(--green); } .track-text .down { color: var(--red); } .track-text .flat { color: var(--amber); }
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
@@ -252,6 +256,7 @@
   <div class="card" style="margin: 0;">
     <div class="label">Forecast for {{ symbol|sym }} — next {{ horizon }} sessions</div>
     <div id="lab-chart"></div>
+    <div id="point" class="point"></div>
     <div id="range-text" class="range-text"></div>
     <div class="legend"><span><i style="border-color: var(--blue);"></i>expected path</span><span><i style="border-color: var(--amber);"></i>68% range (likely)</span><span><i style="border-color: #7a6331; border-top-style: dotted;"></i>90% range (very likely)</span><span><i style="border-color: #8a6d2c; border-top-style: solid;"></i>ranges it gave for past days</span><span><b style="color: var(--red);">●</b> price ended outside</span></div>
     <div class="label" style="margin-top: 18px;">Track record on unseen data</div>
@@ -774,9 +779,29 @@
     chart.timeScale().setVisibleLogicalRange(chartView);
     const end = f && f.mid[f.mid.length - 1][0];
     const day = end ? new Date(end * 1000).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
-    $('range-text').innerHTML = f ? `By <b>${day}</b>: likely <b>${inr(f.end_lo68)} – ${inr(f.end_hi68)}</b> (±${((f.end_hi68 - f.end_lo68) / 2 / f.end_mid * 100).toFixed(1)}%), expected ${inr(f.end_mid)}. `
-      + `<span class="hint">Wide because this stock can honestly move that much in ${f.mid.length - 1} sessions; the track record below shows whether ranges this wide were right.</span>` : '';
+    $('range-text').innerHTML = f ? `Risk band for stops: <b>${inr(f.end_lo68)} – ${inr(f.end_hi68)}</b> (68% of closes landed inside bands like this).` : '';
+    pointCall(d.candles[d.candles.length - 1][4], day);
     drawTrack(d.track);
+  }
+
+  // ---- one price + BEAT/LAG call from the 5-session search winner ----
+  let POINT = null;
+  async function pointCall(lastClose, day) {
+    const el = $('point');
+    if (!POINT) {
+      try { POINT = await (await fetch('/api/lab/point/' + encodeURIComponent(SYMBOL))).json(); } catch (e) { return; }
+    }
+    const P = POINT, s = P && P.stock;
+    if (!P || P.error || !s || s.exp_move == null) { el.innerHTML = ''; return; }
+    const target = lastClose * (1 + s.exp_move), rec = s.record || {}, o = P.overall;
+    const beat = s.call === 'BEAT', pct0 = v => v == null ? '—' : (v * 100).toFixed(0) + '%';
+    el.innerHTML = `
+      <div class="row"><span class="hint">By ${esc(day || 'the 5th session')}:</span>
+        <span class="px">${inr(target)}</span><span class="${s.exp_move >= 0 ? 'up' : 'down'}">${s.exp_move >= 0 ? '+' : ''}${(s.exp_move * 100).toFixed(2)}%</span>
+        <span class="ud-word ${beat ? 'edge' : 'avoid'}">${beat ? 'BEATS THE MARKET' : 'LAGS THE MARKET'}</span>
+        <span class="hint">rank ${Math.round(s.rank * 100)} of 100 · tenth ${s.tenth} of 10</span></div>
+      <div class="why"><b>Track record on unseen weeks (${esc(P.record_from.slice(0, 4))}+):</b> beat/lag calls on ${esc(SYMBOL.replace('.NS', ''))} right <b>${pct0(rec.beat_hit)}</b> of ${rec.n || 0} (all stocks ${pct0(o.beat_hit)}).
+        Up/down right ${pct0(rec.direction_hit)}. The exact price is off by ${rec.mae_point == null ? '—' : (rec.mae_point * 100).toFixed(1) + '%'} on average, the same as "no change" (${rec.mae_flat == null ? '—' : (rec.mae_flat * 100).toFixed(1) + '%'}): trade the call, not the exact rupee.</div>`;
   }
 
   function drawTrack(t) {

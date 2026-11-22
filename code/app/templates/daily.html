@@ -5,7 +5,10 @@
   main { max-width: 1320px; }
   .dh { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: flex-end; margin-bottom: 14px; }
   .dh h1 { margin: 0; } .dh .sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
-  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .tiles { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+  .tile.main { outline: 2px solid var(--blue); }
+  .tile .v { font-size: 28px !important; }
+  @media (max-width: 1200px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .tile .k { color: var(--muted); font-size: 14px; } .tile .v { font-size: 34px; font-weight: 600; margin-top: 4px; }
   .tile .s { font-size: 14px; margin-top: 4px; }
   .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
@@ -34,10 +37,16 @@
 </div>
 <div id="err" class="empty-state" style="display: none;"></div>
 
-<div class="tiles">
-  <div class="card tile" style="margin: 0;"><div class="k">Book A: daily picks (buy at open, sell at close)</div><div class="v" id="ta">—</div><div class="s" id="tas"></div></div>
-  <div class="card tile" style="margin: 0;"><div class="k">Book B: 20-session position book</div><div class="v" id="tb">—</div><div class="s" id="tbs"></div></div>
-  <div class="card tile" style="margin: 0;"><div class="k">₹10,000 in Nifty over the same days</div><div class="v" id="tn">—</div><div class="s" id="tns"></div></div>
+<div class="card" style="margin: 0 0 16px; outline: 2px solid var(--blue);">
+  <div class="label">The fund: ₹10,000 run by the agent, live from its first session — goal ₹20,000</div>
+  <div id="fund" class="empty-state">Loading…</div>
+</div>
+<div class="label" style="margin: 4px 0 8px;">The strategies it can put money in (practice books, replayed history included)</div>
+<div class="tiles" id="tiles"></div>
+
+<div class="card" style="margin-top: 16px;">
+  <div class="label">Governor: every book judged against Nifty each evening</div>
+  <div id="gov" class="empty-state">Loading…</div>
 </div>
 
 <div class="grid2">
@@ -65,7 +74,7 @@
 <div class="card" style="margin-top: 16px;">
   <div class="label">Day by day: ₹10,000 followed the plan</div>
   <div id="chart" style="height: 280px;"></div>
-  <div class="txt" style="font-size: 13px; color: var(--muted);"><b style="color: var(--green);">━</b> Book A &nbsp; <b style="color: var(--blue);">━</b> Book B &nbsp; <b style="color: #9e9e9e;">━</b> Nifty &nbsp; Grey rows were replayed from history (the model only saw data up to each evening); white rows were predicted live.</div>
+  <div class="txt" style="font-size: 13px; color: var(--muted);"><b style="color: #22C55E;">━</b> A buy &nbsp; <b style="color: #EF4444;">━</b> A short &nbsp; <b style="color: #F59E0B;">━</b> A long-short &nbsp; <b style="color: #3B82F6;">━</b> B &nbsp; <b style="color: #9e9e9e;">━</b> Nifty &nbsp; Grey rows were replayed from history (the model only saw data up to each evening); white rows were predicted live.</div>
   <div class="scroll"><div id="ledger"></div></div>
 </div>
 
@@ -85,33 +94,89 @@
   async function load() {
     try { D = await (await fetch('/api/daily')).json(); } catch (e) { return fail('Could not reach the server.'); }
     if (D.error) return fail(`${esc(D.error)} <span class="hint">Run on the laptop: python -m code.research.daily --replay 60</span>`);
-    tiles(); plan(); learn(); calls({}); scored(); ledger();
+    fundCard(); tiles(); gov(); plan(); learn(); calls({}); scored(); ledger();
     live();
   }
   function fail(msg) { $('err').style.display = ''; $('err').innerHTML = msg; }
 
+  const BOOKS = [['M', 'Main book (governor)', 'follows whichever book beats Nifty best', '#FFFFFF'],
+                 ['A', 'Buy top 5', 'intraday, buy at open, sell at close', '#22C55E'],
+                 ['AS', 'Short bottom 5', 'intraday, short at open, buy back at close', '#EF4444'],
+                 ['ALS', 'Long-short', 'buy top 5 + short bottom 5, intraday', '#F59E0B'],
+                 ['AX', 'Short top 5 (contrarian)', 'intraday, fades the model\'s top picks', '#B07CD8'],
+                 ['S', '5-session swing', '5-session winner, checked daily', '#14B8A6'],
+                 ['B', 'Position book', '20-session winner, checked daily', '#3B82F6']];
   function tiles() {
     const S = D.summary, L = D.ledger;
-    const A = S.books.A, B = S.books.B;
     const first = L.length ? L[0].date : null, liveFrom = (L.find(r => !r.replayed) || {}).date;
-    const sub = b => b ? `<span class="${cls(b.pnl)}">${b.pnl >= 0 ? '+' : '−'}${rs(Math.abs(b.pnl))}</span> over ${b.days} sessions · ${b.up_days} up days · charges ${rs(b.charges)}` : '';
-    $('ta').textContent = A ? rs(A.now) : '—'; $('tas').innerHTML = sub(A);
-    $('tb').textContent = B ? rs(B.now) : '—'; $('tbs').innerHTML = sub(B);
+    const sub = b => b ? `<span class="${cls(b.pnl)}">${b.pnl >= 0 ? '+' : '−'}${rs(Math.abs(b.pnl))}</span> · ${b.up_days} of ${b.days} days up · charges ${rs(b.charges)}` : 'Starts with the next run.';
     const nm = L.filter(r => r.book === 'A' && r.nifty_move != null).reduce((v, r) => v * (1 + r.nifty_move), 1);
-    $('tn').textContent = rs(S.start * nm);
-    $('tns').innerHTML = `Since ${nice(first)}${liveFrom ? ` · live since ${nice(liveFrom)}` : ' · all replayed so far'}. If you had followed it with ₹10,000, Book A would now be <b>${A ? rs(A.now) : '—'}</b>.`;
+    const N = S.books.N ? S.books.N.now : S.start * nm;
+    $('tiles').innerHTML = BOOKS.filter(([k]) => k !== 'M' || (D.rules || {}).governor_on).map(([k, name, how]) => { const b = S.books[k];
+      const vs = b ? `<div class="s"><span class="word ${b.now >= N ? 'ok' : 'bad'}">${b.now >= N ? 'AHEAD OF NIFTY' : 'BEHIND NIFTY'} ${rs(Math.abs(b.now - N))}</span></div>` : '';
+      return `<div class="card tile ${k === 'M' ? 'main' : ''}" style="margin: 0;"><div class="k">${name}</div><div class="v">${b ? rs(b.now) : '—'}</div>${vs}<div class="s">${sub(b)}</div><div class="hint">${how}</div></div>`; }).join('')
+      + `<div class="card tile" style="margin: 0;"><div class="k">₹10,000 in Nifty</div><div class="v">${rs(N)}</div><div class="s">Since ${nice(first)}${liveFrom ? ` · live since ${nice(liveFrom)}` : ' · all replayed so far'}.</div></div>`;
+  }
+
+  function fundCard() {
+    const F = D.fund, el = $('fund');
+    if (!F) { el.textContent = 'The fund starts on the next live evening run.'; return; }
+    const R = F.rules, A = F.agents, a = A.filter(x => !x.died).slice(-1)[0], L = F.ledger;
+    if (!A.length) { el.innerHTML = `<b>₹10,000, goal ₹20,000.</b> The first agent is born on the next live evening run (weekdays 6:45 pm) and trades from the session after. Replayed history never counts toward the fund.`; return; }
+    const SL = { ALS: 'Intraday long-short', S: '5-session swing', B: '20-session position' };
+    const bar = (v, max, color) => `<span style="display: inline-block; width: 160px; height: 10px; background: var(--border); border-radius: 5px; vertical-align: middle;"><span style="display: block; width: ${Math.min(100, Math.max(0, v / max * 100))}%; height: 100%; background: ${color}; border-radius: 5px;"></span></span>`;
+    const prog = (F.value - F.start) / (F.goal - F.start);
+    const cfg = a ? JSON.parse(a.config) : {}, wts = a ? JSON.parse(a.weights) : {};
+    el.className = '';
+    el.innerHTML = `
+      <div class="verdict" style="display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap;">
+        <span style="font-size: 36px; font-weight: 600;">${rs(F.value)}</span>
+        <span class="${cls(F.value - F.start)}">${F.value >= F.start ? '+' : '−'}${rs(Math.abs(F.value - F.start))} (${pc(F.value / F.start - 1)})</span>
+        <span>Goal ${rs(F.goal)}: ${bar(F.value - F.start, F.goal - F.start, 'var(--green)')} ${(Math.max(0, prog) * 100).toFixed(1)}%</span>
+        <span class="hint">${L.length ? `${L.length} live session${L.length > 1 ? 's' : ''}` : `starts with the session after ${nice(a && a.born)}`}</span></div>
+      ${a ? `<div class="txt"><b>Agent #${a.id}</b>, born ${nice(a.born)}, ${a.days} session${a.days === 1 ? '' : 's'} old.
+        Penalties ${a.penalties} of ${R.penalty_limit} ${bar(a.penalties, R.penalty_limit, 'var(--red)')} · losing streak ${a.streak} of ${R.streak_limit} ${bar(a.streak, R.streak_limit, 'var(--amber)')}</div>
+      <div class="txt">Money split (re-set every ${R.reweight_every} sessions toward the sleeves earning most per unit of risk, ${(R.floor * 100).toFixed(0)}–${(R.cap * 100).toFixed(0)}% each):
+        ${Object.keys(SL).map(s => `<b>${SL[s]}</b> ${((wts[s] || 0) * 100).toFixed(0)}% <span class="hint">(${esc(cfg[String(R.sleeves[s])] || '—')})</span>`).join(' · ')}</div>` : ''}
+      <div class="hint">A losing day adds a penalty, a winning day removes one. ${R.penalty_limit} net penalties or ${R.streak_limit} losing days in a row and the agent dies: a post-mortem is written and the next agent takes the best untried model setups (a different model family for the sleeve that lost most). The money carries over. Paper only: nothing places orders.</div>
+      ${L.length ? `<table class="t"><tr><th>Session</th><th>Return</th><th>Fund</th><th>Penalties</th><th>Streak</th><th>Agent</th><th>Event</th></tr>
+        ${L.slice().reverse().map(r => `<tr><td>${nice(r.date)}</td><td class="${cls(r.ret)}">${pc(r.ret, 2)}</td><td>${rs(r.end_value)}</td><td>${r.penalties}</td><td>${r.streak}</td><td>#${r.agent}</td><td style="text-align: left;">${esc(r.event || '')}</td></tr>`).join('')}</table>` : ''}
+      ${A.length > 1 ? `<div class="txt" style="margin-top: 10px;"><b>Agents so far</b></div><table class="t"><tr><th>Agent</th><th>Lived</th><th>Return</th><th>Cause of death</th><th>Lesson</th></tr>
+        ${A.map(x => { const pm = x.postmortem ? JSON.parse(x.postmortem) : null; return `<tr><td>#${x.id}</td><td>${nice(x.born)} – ${x.died ? nice(x.died) : 'alive'}</td><td class="${cls(pm && pm.return)}">${pm ? pc(pm.return, 2) : '—'}</td><td>${esc(x.cause || '')}</td><td style="text-align: left;">${esc(pm ? pm.lesson : '')}</td></tr>`; }).join('')}</table>` : ''}`;
+  }
+
+  function gov() {
+    const G = D.governor || [], R = D.rules || {}, names = (R.book_names || {});
+    if (!R.governor_on) { $('gov').closest('.card').style.display = 'none'; return; }
+    if (!G.length) { $('gov').innerHTML = 'Not enough settled sessions yet (needs 10).'; return; }
+    const last = G[G.length - 1], sc = JSON.parse(last.scores || '{}');
+    const order = Object.keys(sc).sort((a, b) => sc[b].score - sc[a].score);
+    const switches = G.filter(g => g.switched || g.retrain).slice(-12).reverse();
+    $('gov').className = '';
+    $('gov').innerHTML = `
+      <div class="txt">Tonight the main book follows <b>${esc(names[last.champion] || last.champion)}</b>. ${esc(last.reason)}.</div>
+      <div class="txt hint">Score = last ${R.window} sessions of (book − Nifty), minus ${R.penalty}× every day it trailed Nifty. Nifty itself scores 0, so if every book is below 0 the main book holds Nifty. A switch needs a lead of ${(R.switch_margin * 100).toFixed(1)}% and costs ${(R.switch_cost * 100).toFixed(1)}%. If the main book trails Nifty by ${(-R.retrain_below * 100).toFixed(0)}% over the window, the model search re-runs on the latest year.</div>
+      <table class="t"><tr><th>Book</th><th>vs Nifty, last ${R.window}</th><th>Penalty</th><th>Score</th><th>Days behind Nifty</th><th></th></tr>
+        ${order.map(b => `<tr><td>${esc(names[b] || b)}</td><td class="${cls(sc[b].excess)}">${pc(sc[b].excess, 2)}</td><td class="neg">−${(sc[b].penalty * 100).toFixed(2)}%</td>
+          <td class="${cls(sc[b].score)}"><b>${pc(sc[b].score, 2)}</b></td><td>${sc[b].days_behind} of ${sc[b].n}</td>
+          <td>${b === last.champion ? '<span class="word ok">FOLLOWING</span>' : ''}</td></tr>`).join('')}</table>
+      <div class="txt" style="margin-top: 10px;"><b>Switches and retrains</b></div>
+      <table class="t">${switches.map(g => `<tr class="${g.replayed ? 'replayed' : ''}"><td>${nice(g.date)}</td><td style="text-align: left;">${g.retrain ? '<span class="word wait">RETRAIN</span> ' : ''}${esc(g.reason)}</td></tr>`).join('') || '<tr><td>No switches yet.</td></tr>'}</table>
+      ${D.last_retrain ? `<div class="hint" style="margin-top: 6px;">Last retrain ${nice(D.last_retrain.date)} on ${esc(D.last_retrain.window.join(' to '))}: ${esc((D.last_retrain.result || []).join(' '))}</div>` : ''}`;
   }
 
   function plan() {
-    const P = D.plan, A = P.filter(p => p.book === 'A'), B = P.filter(p => p.book === 'B');
+    const P = D.plan, A = P.filter(p => p.book === 'A'), AS = P.filter(p => p.book === 'AS'), B = P.filter(p => p.book === 'B');
     const pred = Object.fromEntries(D.predictions.map(p => [p.symbol, p]));
     $('plan-label').textContent = `Plan for the session after ${nice(D.asof)}`;
-    const act = { BUY_OPEN_SELL_CLOSE: 'BUY AT OPEN, SELL AT CLOSE', BUY_OPEN: 'BUY AT OPEN', SELL_OPEN: 'SELL AT OPEN', HOLD: 'HOLD' };
+    const act = { BUY_OPEN_SELL_CLOSE: 'BUY AT OPEN, SELL AT CLOSE', SHORT_OPEN_COVER_CLOSE: 'SHORT AT OPEN, COVER AT CLOSE', BUY_OPEN: 'BUY AT OPEN', SELL_OPEN: 'SELL AT OPEN', HOLD: 'HOLD' };
+    const rowsOf = (list, good) => list.map(p => { const q = pred[p.symbol] || {}; return `<tr><td><a href="/lab?symbol=${encodeURIComponent(p.symbol)}">${esc(p.symbol)}</a></td><td>${p.shares}</td><td>${px(p.est_price)}</td><td>${px(q.lo68)} – ${px(q.hi68)}</td><td><span class="word ${good ? 'ok' : 'bad'}">${act[p.action]}</span></td></tr>`; }).join('') || '<tr><td colspan="5">No picks.</td></tr>';
     $('plan').className = '';
     $('plan').innerHTML = `
-      <div class="txt"><b>Book A</b> — about ${rs(D.summary.books.A ? D.summary.books.A.now / 5 : 2000)} in each, whole shares, bought at the open and sold before the close.</div>
-      <table class="t"><tr><th>Stock</th><th>Shares (approx.)</th><th>Last close</th><th>Likely close</th><th></th></tr>
-        ${A.map(p => { const q = pred[p.symbol] || {}; return `<tr><td><a href="/lab?symbol=${encodeURIComponent(p.symbol)}">${esc(p.symbol)}</a></td><td>${p.shares}</td><td>${px(p.est_price)}</td><td>${px(q.lo68)} – ${px(q.hi68)}</td><td><span class="word ok">${act[p.action]}</span></td></tr>`; }).join('') || '<tr><td colspan="5">No picks.</td></tr>'}</table>
+      <div class="txt"><b>Book A — buy</b> about ${rs(D.summary.books.A ? D.summary.books.A.now / 5 : 2000)} in each, whole shares.</div>
+      <table class="t"><tr><th>Stock</th><th>Shares (approx.)</th><th>Last close</th><th>Likely close</th><th></th></tr>${rowsOf(A, true)}</table>
+      <div class="txt" style="margin-top: 12px;"><b>Book A-short — short</b> about ${rs(D.summary.books.AS ? D.summary.books.AS.now / 5 : 2000)} in each (intraday short: must be bought back the same day). The long-short book does both lists, sized to its own balance.</div>
+      <table class="t"><tr><th>Stock</th><th>Shares (approx.)</th><th>Last close</th><th>Likely close</th><th></th></tr>${rowsOf(AS, false)}</table>
       <div class="txt" style="margin-top: 12px;"><b>Book B</b> — 5 positions, rebalanced every 20 sessions, held in between.</div>
       <table class="t"><tr><th>Stock</th><th>Shares</th><th>Last close</th><th></th></tr>
         ${B.map(p => `<tr><td><a href="/lab?symbol=${encodeURIComponent(p.symbol)}">${esc(p.symbol)}</a></td><td>${p.shares}</td><td>${px(p.est_price)}</td><td><span class="word ${p.action === 'SELL_OPEN' ? 'bad' : p.action === 'HOLD' ? 'mid' : 'ok'}">${act[p.action]}</span></td></tr>`).join('') || '<tr><td colspan="4">Nothing to do.</td></tr>'}</table>
@@ -183,18 +248,19 @@
     const L = D.ledger, days = [...new Set(L.map(r => r.date))];
     const by = Object.fromEntries(L.map(r => [r.date + r.book, r]));
     let n = D.summary.start;
-    const rows = days.map(d => { const a = by[d + 'A'], b = by[d + 'B']; n *= 1 + ((a || b || {}).nifty_move || 0); return { d, a, b, n, rep: (a || b || {}).replayed }; });
-    $('ledger').innerHTML = `<table class="t"><tr><th>Session</th><th>Book A P&L</th><th>Book A</th><th>Book B P&L</th><th>Book B</th><th>Nifty</th><th>₹10,000 in Nifty</th></tr>
+    const rows = days.map(d => { const x = Object.fromEntries(BOOKS.map(([k]) => [k, by[d + k]])); const any = Object.values(x).find(Boolean) || {};
+      n *= 1 + (any.nifty_move || 0); return { d, x, n, nm: any.nifty_move, rep: any.replayed }; });
+    const cell = e => e ? `<td class="${cls(e.pnl)}">${e.pnl >= 0 ? '+' : '−'}${rs(Math.abs(e.pnl))}</td><td>${rs(e.end_value)}</td>` : '<td>—</td><td>—</td>';
+    $('ledger').innerHTML = `<table class="t"><tr><th>Session</th>${BOOKS.map(([k]) => `<th>${k === 'A' ? 'A buy' : k === 'AS' ? 'A short' : k === 'ALS' ? 'A long-short' : 'B'} P&L</th><th>value</th>`).join('')}<th>Nifty</th><th>₹10,000 in Nifty</th></tr>
       ${rows.slice().reverse().map(r => `<tr class="${r.rep ? 'replayed' : ''}"><td>${nice(r.d)}${r.rep ? '' : ' <span class="word ok">LIVE</span>'}</td>
-        <td class="${cls(r.a && r.a.pnl)}">${r.a ? (r.a.pnl >= 0 ? '+' : '−') + rs(Math.abs(r.a.pnl)) : '—'}</td><td>${r.a ? rs(r.a.end_value) : '—'}</td>
-        <td class="${cls(r.b && r.b.pnl)}">${r.b ? (r.b.pnl >= 0 ? '+' : '−') + rs(Math.abs(r.b.pnl)) : '—'}</td><td>${r.b ? rs(r.b.end_value) : '—'}</td>
-        <td class="${cls((r.a || r.b || {}).nifty_move)}">${pc((r.a || r.b || {}).nifty_move, 2)}</td><td>${rs(r.n)}</td></tr>`).join('')}</table>`;
+        ${BOOKS.map(([k]) => cell(r.x[k])).join('')}<td class="${cls(r.nm)}">${pc(r.nm, 2)}</td><td>${rs(r.n)}</td></tr>`).join('')}</table>`;
     if (!window.LightweightCharts || !rows.length) return;
     const el = $('chart');
     chart = LightweightCharts.createChart(el, { width: el.clientWidth, height: 280, layout: { background: { color: 'transparent' }, textColor: '#9aa0a6' },
       grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255,255,255,.06)' } }, timeScale: { borderVisible: false } });
     const line = (color, f) => chart.addLineSeries({ color, lineWidth: 2, priceLineVisible: false }).setData(rows.filter(f).map(r => ({ time: r.d, value: f(r) })));
-    line('#9e9e9e', r => r.n); line('#22C55E', r => r.a && r.a.end_value); line('#3B82F6', r => r.b && r.b.end_value);
+    line('#9e9e9e', r => r.n);
+    BOOKS.forEach(([k, , , color]) => line(color, r => r.x[k] && r.x[k].end_value));
     chart.timeScale().fitContent();
     new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth })).observe(el);
   }

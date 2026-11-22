@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS daily_ledger (
   date TEXT, book TEXT, start_value REAL, end_value REAL, pnl REAL, charges REAL, nifty_move REAL,
   replayed INTEGER, PRIMARY KEY (date, book));
 CREATE TABLE IF NOT EXISTS daily_meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS daily_governor (
+  date TEXT PRIMARY KEY, champion TEXT, switched INTEGER, reason TEXT, scores TEXT, retrain INTEGER, replayed INTEGER);
 """
 
 
@@ -95,7 +97,7 @@ def connect(path: Path = DB) -> sqlite3.Connection:
 
 
 def clear_replayed(conn: sqlite3.Connection) -> None:
-    for t in ("daily_predictions", "daily_plan", "daily_trades", "daily_ledger"):
+    for t in ("daily_predictions", "daily_plan", "daily_trades", "daily_ledger", "daily_governor"):
         conn.execute(f"DELETE FROM {t} WHERE replayed = 1")
     conn.commit()
 
@@ -122,11 +124,27 @@ def nifty100() -> List[str]:
     return pd.read_csv(NIFTY100)["Symbol"].str.strip().tolist()
 
 
+HOLIDAYS = DATA / "nse_holidays.json"
+
+
+def missing_sessions(have: pd.DatetimeIndex, start: pd.Timestamp, end: pd.Timestamp) -> List[str]:
+    """NSE trading days between start and end (weekdays minus exchange holidays) with no data.
+    A missing day would make the next row of every feature, outcome and ledger span two sessions."""
+    try:
+        hol = set(json.loads(HOLIDAYS.read_text(encoding="utf-8"))["holidays"])
+    except (OSError, ValueError, KeyError):
+        hol = set()
+    if hol:   # only judge years the holiday list covers; an older year's holidays would look like holes
+        start = max(start, pd.Timestamp(f"{min(h[:4] for h in hol)}-01-01"))
+    have_s = {d.strftime("%Y-%m-%d") for d in have}
+    return [d.strftime("%Y-%m-%d") for d in pd.bdate_range(start, end)
+            if d.strftime("%Y-%m-%d") not in hol and d.strftime("%Y-%m-%d") not in have_s]
+
+
 def update_data() -> None:
-    """Fetch any missing NSE days and Nifty closes up to today."""
+    """Fetch any missing NSE days (new ones and holes in the last 400 days) and Nifty closes."""
     from code.research import bhavcopy
-    last = max(f.stem for f in bhavcopy.DAYS.glob("*.parquet"))
-    bhavcopy.backfill(start=datetime.strptime(last, "%Y%m%d").date() + timedelta(days=1), workers=2)
+    bhavcopy.backfill(start=date.today() - timedelta(days=400), workers=2)   # skips days already on disk
     try:
         import yfinance as yf
         from code.research.portfolio import NIFTY
@@ -158,12 +176,12 @@ def relabel(df: pd.DataFrame, w: Dict[str, pd.DataFrame], horizon: int) -> pd.Da
     return out
 
 
-def load_frames(since: str = SINCE) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, pd.DataFrame]]:
+def load_frames(since: str = SINCE) -> Tuple[Dict[int, pd.DataFrame], Dict[str, pd.DataFrame]]:
+    """Feature frames for the 1-, 5- and 20-session outcomes (same features, different labels)."""
     from code.research import bhavcopy
     w = u.panel(bhavcopy.load(since=since))
     d1 = u.features(w, horizon=1)
-    d20 = relabel(d1, w, 20)
-    return ms.prepare(d1), ms.prepare(d20), w
+    return {1: ms.prepare(d1), 5: ms.prepare(relabel(d1, w, 5)), 20: ms.prepare(relabel(d1, w, 20))}, w
 
 
 def best_spec(horizon: int) -> Dict[str, Any]:
@@ -193,9 +211,11 @@ def fit_score(df: pd.DataFrame, spec: Dict[str, Any], train_until: pd.Timestamp,
 
 # ---------- one evening ---------------------------------------------------------------------
 
-def predict_day(conn: sqlite3.Connection, d1: pd.DataFrame, d20: pd.DataFrame, asof: pd.Timestamp,
-                replayed: int, spec1: Dict[str, Any], spec20: Dict[str, Any], universe: List[str]) -> None:
-    """Tomorrow's calls for the corpus and both books' plans, using only what was known at asof's close."""
+def predict_day(conn: sqlite3.Connection, frames: Dict[int, pd.DataFrame], asof: pd.Timestamp,
+                replayed: int, specs: Dict[int, Any], universe: List[str]) -> None:
+    """Tomorrow's calls for the corpus and every book's plan, using only what was known at asof's close.
+    frames / specs are keyed by horizon in sessions (1, 5, 20)."""
+    d1, spec1 = frames[1], specs[1]
     dates = pd.Index(sorted(d1["date"].unique()))
     today = d1[d1["date"] == asof]
     corpus = today[today["symbol"].isin(universe)]
@@ -225,54 +245,99 @@ def predict_day(conn: sqlite3.Connection, d1: pd.DataFrame, d20: pd.DataFrame, a
                       "BEAT" if rk[idx] >= 0.5 else "LAG", exp, close, close * (1 + exp - vol), close * (1 + exp + vol),
                       vol, created))
 
-    # Book A: top 5 of the corpus, whole shares of ~book/5 each (skip a stock one share can't fit)
-    value_a = book_value(conn, "A")
-    picks = []
-    for idx in corpus_score.sort_values(ascending=False).index:
-        price = float(w_close(corpus.loc[idx]))
-        sh = int((value_a / N_A) // price)
-        if sh > 0:
-            picks.append((corpus.loc[idx, "symbol"], sh, price, float(rk[idx])))
-        if len(picks) == N_A:
-            break
-    for sym, sh, price, r_ in picks:
-        conn.execute("INSERT OR REPLACE INTO daily_plan VALUES (?,?,?,?,?,?,?,?)",
-                     (asof.strftime("%Y-%m-%d"), "A", sym, "BUY_OPEN_SELL_CLOSE", sh, price, r_, replayed))
+    # Intraday books, whole shares of ~book/5 per stock (a stock one share can't fit is skipped):
+    #   A   buy the top 5 at the open, sell at the close
+    #   AS  short the bottom 5 at the open, buy back at the close (intraday MIS short)
+    #   ALS both: ~book/5 on each of 10 legs (2x gross, inside the ~20% intraday margin)
+    def pick(book: str, order: List[Any]) -> List[Tuple[str, int, float, float]]:
+        value = book_value(conn, book)
+        out = []
+        for idx in order:
+            price = float(w_close(corpus.loc[idx]))
+            sh = int((value / N_A) // price)
+            if sh > 0:
+                out.append((corpus.loc[idx, "symbol"], sh, price, float(rk[idx])))
+            if len(out) == N_A:
+                break
+        return out
+    best_first = list(corpus_score.sort_values(ascending=False).index)
+    a = asof.strftime("%Y-%m-%d")
+    for book, legs in (("A", [("BUY_OPEN_SELL_CLOSE", best_first)]), ("AS", [("SHORT_OPEN_COVER_CLOSE", best_first[::-1])]),
+                       ("ALS", [("BUY_OPEN_SELL_CLOSE", best_first), ("SHORT_OPEN_COVER_CLOSE", best_first[::-1])]),
+                       ("AX", [("SHORT_OPEN_COVER_CLOSE", best_first)])):          # contrarian: fade the top 5
+        for action, order in legs:
+            for sym, sh, price, r_ in pick(book, order):
+                conn.execute("INSERT OR REPLACE INTO daily_plan VALUES (?,?,?,?,?,?,?,?)",
+                             (a, book, sym, action, sh, price, r_, replayed))
 
-    # Book B: rebalance every B_REBAL sessions (or when empty), keep stocks still in the top 30%
-    held, cash = holdings(conn, "B")
-    last = conn.execute("SELECT v FROM daily_meta WHERE k = 'b_last_rebalance'").fetchone()
-    since = (i - dates.get_loc(pd.Timestamp(last["v"]))) if last and pd.Timestamp(last["v"]) in dates else B_REBAL
-    if held and since < B_REBAL:
-        for sym, sh in held.items():
-            conn.execute("INSERT OR REPLACE INTO daily_plan VALUES (?,?,?,?,?,?,?,?)",
-                         (asof.strftime("%Y-%m-%d"), "B", sym, "HOLD", sh, None, None, replayed))
-        return
-    t20 = d20[d20["date"] == asof]
-    s20 = fit_score(d20, spec20, asof, t20)
-    r20 = pd.Series(s20.rank(pct=True).to_numpy(), index=t20["symbol"].to_numpy())
-    keep = [s for s in held if r20.get(s, 0.0) >= B_EXIT]
-    value_b = book_value(conn, "B")
-    close_of = dict(zip(t20["symbol"], [w_close(r) for _, r in t20.iterrows()]))
+    for book, (frame, spec, rebal, keep_rank) in holding_books(frames, specs).items():
+        plan_holding(conn, book, frame, spec, asof, i, dates, rebal, keep_rank, replayed)
+
+
+# holding books (delivery, held across days): B = 20-session position book, S = 5-session swing book
+S_REBAL, S_EXIT = 5, 0.80
+
+
+def holding_books(frames: Dict[int, pd.DataFrame], specs: Dict[int, Any]) -> Dict[str, Tuple]:
+    out = {"B": (frames[20], specs[20], B_REBAL, B_EXIT)}
+    if 5 in frames and specs.get(5):
+        out["S"] = (frames[5], specs[5], S_REBAL, S_EXIT)
+    return out
+
+
+def plan_holding(conn: sqlite3.Connection, book: str, frame: pd.DataFrame, spec: Dict[str, Any], asof: pd.Timestamp,
+                 i: int, dates: pd.Index, rebal: int, keep_rank: float, replayed: int) -> None:
+    """Checked every evening: sell a holding that slipped to the middle of the ranking or fell B_STOP
+    below its buy price; every `rebal` sessions also drop anything below `keep_rank`; fill to 5."""
+    held, _ = holdings(conn, book)
+    key = f"{book.lower()}_last_rebalance"
+    last = conn.execute("SELECT v FROM daily_meta WHERE k = ?", (key,)).fetchone()
+    since = (i - dates.get_loc(pd.Timestamp(last["v"]))) if last and pd.Timestamp(last["v"]) in dates else rebal
+    t = frame[frame["date"] == asof]
+    s = fit_score(frame, spec, asof, t)
+    r = pd.Series(s.rank(pct=True).to_numpy(), index=t["symbol"].to_numpy())
+    close_of = dict(zip(t["symbol"], t["close_px"].astype(float)))
+    entry = {row["symbol"]: row["price"] for row in conn.execute(
+        "SELECT symbol, price FROM daily_trades WHERE book = ? AND side = 'BUY' ORDER BY rowid", (book,))}
+    full = since >= rebal or not held
+    keep = b_keep(held, r, close_of, entry, full=full, keep_rank=keep_rank)
+    value = book_value(conn, book)
     adds = []
-    for sym in r20.sort_values(ascending=False).index:
+    for sym in r.sort_values(ascending=False).index:
+        if len(keep) + len(adds) >= N_B:
+            break
         if sym in keep or sym in held:
             continue
         price = close_of.get(sym)
-        if price and (value_b / N_B) // price > 0:
+        if price and (value / N_B) // price > 0:
             adds.append(sym)
-        if len(keep) + len(adds) == N_B:
-            break
     a = asof.strftime("%Y-%m-%d")
     for sym, sh in held.items():
         act = "HOLD" if sym in keep else "SELL_OPEN"
         conn.execute("INSERT OR REPLACE INTO daily_plan VALUES (?,?,?,?,?,?,?,?)",
-                     (a, "B", sym, act, sh, close_of.get(sym), float(r20.get(sym, np.nan)), replayed))
+                     (a, book, sym, act, sh, close_of.get(sym), float(r.get(sym, np.nan)), replayed))
     for sym in adds:
-        sh = int((value_b / N_B) // close_of[sym])
+        sh = int((value / N_B) // close_of[sym])
         conn.execute("INSERT OR REPLACE INTO daily_plan VALUES (?,?,?,?,?,?,?,?)",
-                     (a, "B", sym, "BUY_OPEN", sh, close_of[sym], float(r20[sym]), replayed))
-    conn.execute("INSERT OR REPLACE INTO daily_meta VALUES ('b_last_rebalance', ?)", (a,))
+                     (a, book, sym, "BUY_OPEN", sh, close_of[sym], float(r[sym]), replayed))
+    if full:
+        conn.execute("INSERT OR REPLACE INTO daily_meta VALUES (?, ?)", (key, a))
+
+
+B_DAILY_EXIT, B_STOP = 0.50, 0.05
+
+
+def b_keep(held: Dict[str, int], r20: pd.Series, close: Dict[str, float], entry: Dict[str, float], full: bool,
+           keep_rank: float = B_EXIT) -> List[str]:
+    """Which holdings stay tonight. Daily: out if ranked below the middle or down B_STOP from the
+    buy price. On full-rebalance nights: out unless still ranked at keep_rank or better."""
+    keep = []
+    for s in held:
+        rank, px, buy = r20.get(s, 0.0), close.get(s), entry.get(s)
+        stopped = px is not None and buy and px <= buy * (1 - B_STOP)
+        if rank >= (keep_rank if full else B_DAILY_EXIT) and not stopped:
+            keep.append(s)
+    return keep
 
 
 def w_close(r: pd.Series) -> float:
@@ -283,6 +348,51 @@ def w_close(r: pd.Series) -> float:
 def raw(w: Dict[str, pd.DataFrame], col: str) -> pd.DataFrame:
     """Prices as actually traded that day (the panel is split-adjusted for the models)."""
     return w[col] * w["cum"]
+
+
+INTRADAY_BOOKS = ("A", "AS", "ALS", "AX")
+BOOK_NAMES = {"A": "Buy top 5", "AS": "Short bottom 5", "ALS": "Buy top 5 + short bottom 5", "AX": "Short top 5 (contrarian)",
+              "B": "20-session position book", "S": "5-session swing book", "N": "Nifty (NIFTYBEES)", "M": "Main book (governor)"}
+
+# ---------- governor: judge every book against Nifty each evening, follow the best ----------
+# score = sum over the last WINDOW sessions of (book return - Nifty return), minus PENALTY x every
+# shortfall. Nifty itself (book N) always scores 0, so when every strategy trails Nifty the main
+# book holds Nifty. A switch needs a lead of SWITCH_MARGIN and pays SWITCH_COST. When the main
+# book trails Nifty by RETRAIN_BELOW over the window, a retrain is requested (search re-run on the
+# most recent year), at most once every RETRAIN_GAP sessions. Decisions use settled days only.
+GOVERNOR_ON = False            # paused 23 Nov 2026 at your request; Nifty book N still runs as the reference
+CANDIDATES = ("A", "AS", "ALS", "AX", "B", "N")
+WINDOW, MIN_HISTORY, PENALTY = 20, 10, 2.0
+SWITCH_MARGIN, SWITCH_COST = 0.005, 0.002
+RETRAIN_BELOW, RETRAIN_GAP = -0.02, 5
+
+
+def settle_intraday(conn: sqlite3.Connection, book: str, a: str, dstr: str, O: pd.Series, C: pd.Series,
+                    replayed: int, n_move: Optional[float]) -> None:
+    """Open at the open, close at the close. Longs buy then sell; shorts sell first then buy back.
+    Whole shares of ~book/5 per stock, sized on the actual open."""
+    start = book_value(conn, book)
+    pnl = chg = 0.0
+    for p in conn.execute("SELECT symbol, action FROM daily_plan WHERE asof=? AND book=?", (a, book)).fetchall():
+        s, short = p["symbol"], p["action"] == "SHORT_OPEN_COVER_CLOSE"
+        if pd.isna(O.get(s)) or pd.isna(C.get(s)):
+            continue
+        if short:
+            entry, exit_ = float(O[s]) * (1 - SLIP_A), float(C[s]) * (1 + SLIP_A)     # sell high-ish, buy back
+        else:
+            entry, exit_ = float(O[s]) * (1 + SLIP_A), float(C[s]) * (1 - SLIP_A)
+        sh = int((start / N_A) // float(O[s]))
+        if sh <= 0:
+            continue
+        buy_val, sell_val = (sh * exit_, sh * entry) if short else (sh * entry, sh * exit_)
+        c = intraday_charges(buy_val, sell_val)
+        pnl += sell_val - buy_val - c
+        chg += c
+        sides = ("SHORT", "COVER") if short else ("BUY", "SELL")
+        conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, book, s, sides[0], sh, entry, c, replayed))
+        conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, book, s, sides[1], sh, exit_, 0.0, replayed))
+    conn.execute("INSERT OR REPLACE INTO daily_ledger VALUES (?,?,?,?,?,?,?,?)",
+                 (dstr, book, start, start + pnl, pnl, chg, n_move, replayed))
 
 
 def settle_day(conn: sqlite3.Connection, w: Dict[str, pd.DataFrame], asof: pd.Timestamp, day: pd.Timestamp,
@@ -308,46 +418,42 @@ def settle_day(conn: sqlite3.Connection, w: Dict[str, pd.DataFrame], asof: pd.Ti
                          (dstr, float(O[p["symbol"]]), cl, m, med, m - med, int(beat == (p["call"] == "BEAT")),
                           int(p["lo68"] <= cl <= p["hi68"]), n_move, float(O[p["symbol"]] / p["close"] - 1), a, p["symbol"]))
 
-    # Book A: buy at the open, sell at the close, whole shares sized on the actual open
-    start = book_value(conn, "A")
-    pnl = chg = 0.0
-    plan = conn.execute("SELECT symbol FROM daily_plan WHERE asof=? AND book='A'", (a,)).fetchall()
-    for p in plan:
-        s = p["symbol"]
-        if pd.isna(O.get(s)) or pd.isna(C.get(s)):
-            continue
-        buy_px, sell_px = float(O[s]) * (1 + SLIP_A), float(C[s]) * (1 - SLIP_A)
-        sh = int((start / N_A) // buy_px)
-        if sh <= 0:
-            continue
-        c = intraday_charges(sh * buy_px, sh * sell_px)
-        pnl += sh * (sell_px - buy_px) - c
-        chg += c
-        conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, "A", s, "BUY", sh, buy_px, c, replayed))
-        conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, "A", s, "SELL", sh, sell_px, 0.0, replayed))
-    conn.execute("INSERT OR REPLACE INTO daily_ledger VALUES (?,?,?,?,?,?,?,?)",
-                 (dstr, "A", start, start + pnl, pnl, chg, n_move, replayed))
+    for book in INTRADAY_BOOKS:
+        settle_intraday(conn, book, a, dstr, O, C, replayed, n_move)
 
-    # Book B: a split or bonus overnight multiplies the shares held (no cost), then sells and buys at
-    # the open (delivery), then everything is valued at the close
-    start_b = book_value(conn, "B")
-    held, _ = holdings(conn, "B")
+    for book in HOLDING_BOOKS:
+        if book == "B" or conn.execute("SELECT 1 FROM daily_plan WHERE book = ? LIMIT 1", (book,)).fetchone():
+            settle_holding(conn, book, w, asof, day, a, dstr, O, n_move, replayed)
+    settle_nifty_and_main(conn, a, dstr, n_move, replayed)
+    from code.research import fund
+    fund.settle(conn, dstr, replayed)
+
+
+HOLDING_BOOKS = ("B", "S")
+
+
+def settle_holding(conn: sqlite3.Connection, book: str, w: Dict[str, pd.DataFrame], asof: pd.Timestamp, day: pd.Timestamp,
+                   a: str, dstr: str, O: pd.Series, n_move: Optional[float], replayed: int) -> None:
+    """A split or bonus overnight multiplies the shares held (no cost), then sells and buys at the
+    open (delivery charges), then everything is valued at the close."""
+    start_b = book_value(conn, book)
+    held, _ = holdings(conn, book)
     for s, n in held.items():
         ratio = float(w["cum"].loc[asof, s] / w["cum"].loc[day, s]) if s in w["cum"].columns else 1.0
         if pd.notna(ratio) and abs(ratio - 1) > 1e-6:
             extra = int(round(n * ratio)) - n
-            conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, "B", s, "SPLIT", extra, 0.0, 0.0, replayed))
-    held, _ = holdings(conn, "B")
+            conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, book, s, "SPLIT", extra, 0.0, 0.0, replayed))
+    held, _ = holdings(conn, book)
     chg_b = 0.0
-    for p in conn.execute("SELECT symbol, action, shares FROM daily_plan WHERE asof=? AND book='B'", (a,)).fetchall():
+    for p in conn.execute("SELECT symbol, action, shares FROM daily_plan WHERE asof=? AND book=?", (a, book)).fetchall():
         s = p["symbol"]
         if p["action"] == "SELL_OPEN" and held.get(s) and pd.notna(O.get(s)):
             px = float(O[s]) * (1 - SLIP_B)
             c = delivery_charges(0.0, held[s] * px)
             chg_b += c
-            conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, "B", s, "SELL", held[s], px, c, replayed))
-    _, cash = holdings(conn, "B")
-    buys = [p for p in conn.execute("SELECT symbol, shares FROM daily_plan WHERE asof=? AND book='B' AND action='BUY_OPEN'", (a,))]
+            conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, book, s, "SELL", held[s], px, c, replayed))
+    _, cash = holdings(conn, book)
+    buys = [p for p in conn.execute("SELECT symbol, shares FROM daily_plan WHERE asof=? AND book=? AND action='BUY_OPEN'", (a, book))]
     for p in buys:
         s = p["symbol"]
         if pd.isna(O.get(s)):
@@ -359,45 +465,116 @@ def settle_day(conn: sqlite3.Connection, w: Dict[str, pd.DataFrame], asof: pd.Ti
         c = delivery_charges(sh * px, 0.0)
         cash -= sh * px + c
         chg_b += c
-        conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, "B", s, "BUY", sh, px, c, replayed))
-    held, cash = holdings(conn, "B")
+        conn.execute("INSERT INTO daily_trades VALUES (?,?,?,?,?,?,?,?)", (dstr, book, s, "BUY", sh, px, c, replayed))
+    held, cash = holdings(conn, book)
     last_px = raw(w, "close").loc[:day].ffill().iloc[-1]
     end_b = cash + sum(n * float(last_px.get(s, 0.0)) for s, n in held.items())
     conn.execute("INSERT OR REPLACE INTO daily_ledger VALUES (?,?,?,?,?,?,?,?)",
-                 (dstr, "B", start_b, end_b, end_b - start_b, chg_b, n_move, replayed))
+                 (dstr, book, start_b, end_b, end_b - start_b, chg_b, n_move, replayed))
+
+
+def settle_nifty_and_main(conn: sqlite3.Connection, a: str, dstr: str, n_move: Optional[float], replayed: int) -> None:
+    """Book N holds Nifty (NIFTYBEES, ~0.05%/yr cost ignored). Book M earns the day's return of the
+    book the governor picked on the evening of `a` (never one picked after seeing `dstr`)."""
+    nm = n_move or 0.0
+    start_n = book_value(conn, "N")
+    conn.execute("INSERT OR REPLACE INTO daily_ledger VALUES (?,?,?,?,?,?,?,?)",
+                 (dstr, "N", start_n, start_n * (1 + nm), start_n * nm, 0.0, n_move, replayed))
+    if not GOVERNOR_ON:
+        return
+    g = conn.execute("SELECT champion, switched FROM daily_governor WHERE date = ?", (a,)).fetchone()
+    champ, switched = (g["champion"], g["switched"]) if g else ("N", 0)
+    row = conn.execute("SELECT start_value, pnl FROM daily_ledger WHERE date = ? AND book = ?", (dstr, champ)).fetchone()
+    r = (row["pnl"] / row["start_value"]) if row and row["start_value"] else nm
+    cost = SWITCH_COST if switched else 0.0
+    start_m = book_value(conn, "M")
+    end_m = start_m * (1 + r - cost)
+    conn.execute("INSERT OR REPLACE INTO daily_ledger VALUES (?,?,?,?,?,?,?,?)",
+                 (dstr, "M", start_m, end_m, end_m - start_m, start_m * cost, n_move, replayed))
+
+
+def scores(conn: sqlite3.Connection, upto: str) -> Dict[str, Dict[str, float]]:
+    """Each candidate's last WINDOW settled sessions against Nifty, with penalties for trailing it."""
+    led = pd.read_sql("SELECT date, book, start_value, pnl, nifty_move FROM daily_ledger WHERE date <= ?", conn, params=(upto,))
+    out = {}
+    for b in CANDIDATES:
+        l = led[led["book"] == b].sort_values("date").tail(WINDOW)
+        if len(l) < MIN_HISTORY:
+            continue
+        ex = (l["pnl"] / l["start_value"]).to_numpy() - l["nifty_move"].fillna(0.0).to_numpy()
+        short = np.clip(-ex, 0, None)
+        out[b] = {"excess": round(float(ex.sum()), 5), "penalty": round(float(PENALTY * short.sum()), 5),
+                  "score": round(float(ex.sum() - PENALTY * short.sum()), 5), "days_behind": int((ex < -1e-9).sum()), "n": int(len(l))}
+    return out
+
+
+def decide(conn: sqlite3.Connection, day: str, replayed: int) -> Dict[str, Any]:
+    """Tonight's champion for the main book, and whether to retrain."""
+    sc = scores(conn, day)
+    prev = conn.execute("SELECT champion FROM daily_governor WHERE date < ? ORDER BY date DESC LIMIT 1", (day,)).fetchone()
+    current = prev["champion"] if prev else "N"
+    champ, reason = current, "keeps the lead"
+    if sc:
+        best = max(sc, key=lambda b: sc[b]["score"])
+        cur_score = sc.get(current, {}).get("score", -np.inf)
+        if best != current and sc[best]["score"] > cur_score + SWITCH_MARGIN:
+            champ = best
+            reason = (f"switch: {BOOK_NAMES[best]} scores {sc[best]['score']:+.2%} vs {BOOK_NAMES.get(current, current)} "
+                      f"{cur_score:+.2%}" if np.isfinite(cur_score) else f"start: {BOOK_NAMES[best]} leads")
+        if champ == "N" and best == "N":
+            reason = "every strategy trails Nifty after penalties: holding Nifty"
+    m = conn.execute("SELECT start_value, pnl, nifty_move FROM daily_ledger WHERE book = 'M' AND date <= ? ORDER BY date DESC LIMIT ?",
+                     (day, WINDOW)).fetchall()
+    m_ex = sum(r["pnl"] / r["start_value"] - (r["nifty_move"] or 0.0) for r in m) if len(m) >= MIN_HISTORY else 0.0
+    last_rt = conn.execute("SELECT COUNT(*) FROM daily_governor WHERE date > COALESCE((SELECT MAX(date) FROM daily_governor "
+                           "WHERE retrain = 1 AND date < ?), '') AND date < ?", (day, day)).fetchone()[0]
+    has_rt = conn.execute("SELECT 1 FROM daily_governor WHERE retrain = 1 AND date < ?", (day,)).fetchone()
+    retrain = int(m_ex < RETRAIN_BELOW and (not has_rt or last_rt >= RETRAIN_GAP))
+    if retrain:
+        reason += f"; main book trails Nifty by {m_ex:+.2%} over {len(m)} sessions: retrain requested"
+    conn.execute("INSERT OR REPLACE INTO daily_governor VALUES (?,?,?,?,?,?,?)",
+                 (day, champ, int(champ != current), reason, json.dumps(sc), retrain, replayed))
+    return {"champion": champ, "reason": reason, "retrain": retrain, "scores": sc}
 
 
 # ---------- driver --------------------------------------------------------------------------
 
 def _frames_with_close(since: str = SINCE):
-    d1, d20, w = load_frames(since)
+    frames, w = load_frames(since)
     px = raw(w, "close").stack()
     px.index.names = ["date", "symbol"]
-    d1 = d1.join(px.rename("close_px"), on=["date", "symbol"])
-    d20 = d20.join(px.rename("close_px"), on=["date", "symbol"])
-    return d1, d20, w
+    return {h: f.join(px.rename("close_px"), on=["date", "symbol"]) for h, f in frames.items()}, w
 
 
 def run(replay: int = 0, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
+    from code.research import fund
     conn = conn or connect()
     if not replay:
         update_data()
-    d1, d20, w = _frames_with_close()
-    spec1, spec20 = best_spec(1), best_spec(20)
+    frames, w = _frames_with_close()
+    d1 = frames[1]
     universe = nifty100()
+    specs = fund.current_specs(conn) if not replay else {}
+    specs = {h: specs.get(h) or best_spec(h) for h in (1, 5, 20)}
     from code.research.portfolio import NIFTY
     nifty = pd.read_parquet(NIFTY)["nifty"] if NIFTY.exists() else None
     dates = pd.Index(sorted(d1["date"].unique()))
+    gaps = missing_sessions(pd.DatetimeIndex(dates), dates[-1] - pd.Timedelta(days=400), dates[-1])
+    if gaps:   # never settle or predict across a hole: the numbers would be silently wrong
+        raise RuntimeError(f"NSE data missing for {len(gaps)} trading day(s): {', '.join(gaps[:10])}. "
+                           "Run: python -m code.research.bhavcopy <first missing date>")
     if replay:
         clear_replayed(conn)
-        conn.execute("DELETE FROM daily_meta WHERE k = 'b_last_rebalance'")
+        conn.execute("DELETE FROM daily_meta WHERE k IN ('b_last_rebalance', 's_last_rebalance')")
         days = dates[-(replay + 1):]
         for asof, nxt in zip(days[:-1], days[1:]):
-            predict_day(conn, d1, d20, asof, 1, spec1, spec20, universe)
+            predict_day(conn, frames, asof, 1, specs, universe)
             settle_day(conn, w, asof, nxt, 1, nifty)
+            if GOVERNOR_ON:
+                decide(conn, nxt.strftime("%Y-%m-%d"), 1)
             conn.commit()
             logger.info("replayed %s -> %s", asof.date(), nxt.date())
-        predict_day(conn, d1, d20, days[-1], 1, spec1, spec20, universe)
+        predict_day(conn, frames, days[-1], 1, specs, universe)
         conn.commit()
         return summary(conn)
     # live: settle every predicted day that now has its next session, then predict from the latest close
@@ -408,9 +585,33 @@ def run(replay: int = 0, conn: Optional[sqlite3.Connection] = None) -> Dict[str,
         if len(later):
             rep = conn.execute("SELECT MAX(replayed) r FROM daily_predictions WHERE asof = ?", (a,)).fetchone()["r"] or 0
             settle_day(conn, w, ts, later[0], int(rep), nifty)
-    predict_day(conn, d1, d20, dates[-1], 0, spec1, spec20, universe)
+            g = decide(conn, later[0].strftime("%Y-%m-%d"), 0) if GOVERNOR_ON else {"retrain": 0}
+            conn.commit()
+            if g["retrain"]:
+                retrain(conn, dates[-1])
+                specs[1] = best_spec(1)
+    # the fund manager: born on the first live evening, replaced (with new model setups) when it dies
+    fund.ensure_agent(conn, dates[-1].strftime("%Y-%m-%d"))
+    specs = {h: fund.current_specs(conn).get(h) or specs[h] for h in (1, 5, 20)}
+    predict_day(conn, frames, dates[-1], 0, specs, universe)
     conn.commit()
     return summary(conn)
+
+
+def retrain(conn: sqlite3.Connection, today: pd.Timestamp) -> None:
+    """Penalties piled up: re-run the 1-day model search choosing on the most recent year, so the
+    combination of models / inputs / target can change. Runs in its own process (~15 min)."""
+    import subprocess
+    import sys as _sys
+    frm = (today - pd.Timedelta(days=365)).strftime("%Y-%m-%d")
+    to = (today - pd.Timedelta(days=7)).strftime("%Y-%m-%d")       # last week's outcomes aren't all settled
+    logger.info("retraining: model search on %s..%s", frm, to)
+    r = subprocess.run([_sys.executable, "-m", "code.research.model_search", "--horizon", "1", "--valid", f"{frm}:{to}"],
+                       cwd=str(DATA.parents[1]), capture_output=True, text=True, timeout=3 * 3600)
+    conn.execute("INSERT OR REPLACE INTO daily_meta VALUES ('last_retrain', ?)",
+                 (json.dumps({"date": today.strftime("%Y-%m-%d"), "window": [frm, to], "exit": r.returncode,
+                              "result": r.stdout.strip().splitlines()[-2:] if r.stdout else []}),))
+    conn.commit()
 
 
 # ---------- report (read by the dashboard; the same payload is pushed to Railway) -------------
@@ -431,6 +632,11 @@ def report(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
         "daily_accuracy": rows("SELECT outcome_date AS date, AVG(right) AS accuracy, AVG(in_range) AS in_range, "
                                "COUNT(*) AS n, MAX(replayed) AS replayed FROM daily_predictions "
                                "WHERE move IS NOT NULL GROUP BY outcome_date ORDER BY outcome_date"),
+        "governor": rows("SELECT date, champion, switched, reason, scores, retrain, replayed FROM daily_governor ORDER BY date"),
+        "fund": __import__("code.research.fund", fromlist=["report"]).report(conn),
+        "last_retrain": (lambda r: json.loads(r[0]) if r else None)(conn.execute("SELECT v FROM daily_meta WHERE k = 'last_retrain'").fetchone()),
+        "rules": {"governor_on": GOVERNOR_ON, "window": WINDOW, "penalty": PENALTY, "switch_margin": SWITCH_MARGIN, "switch_cost": SWITCH_COST,
+                  "retrain_below": RETRAIN_BELOW, "book_names": BOOK_NAMES},
         "generated": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -453,10 +659,10 @@ def summary(conn: sqlite3.Connection) -> Dict[str, Any]:
     led = pd.read_sql("SELECT * FROM daily_ledger ORDER BY date", conn)
     pred = pd.read_sql("SELECT * FROM daily_predictions WHERE move IS NOT NULL", conn)
     books = {}
-    for b in ("A", "B"):
+    for b in ("M", *INTRADAY_BOOKS, "S", "B", "N"):
         l = led[led["book"] == b]
         if len(l):
-            books[b] = {"now": round(float(l["end_value"].iloc[-1]), 2), "pnl": round(float(l["end_value"].iloc[-1] - START_CASH), 2),
+            books[b] = {"name": BOOK_NAMES[b], "now": round(float(l["end_value"].iloc[-1]), 2), "pnl": round(float(l["end_value"].iloc[-1] - START_CASH), 2),
                         "days": int(len(l)), "up_days": int((l["pnl"] > 0).sum()), "charges": round(float(l["charges"].sum()), 2)}
     out: Dict[str, Any] = {"start": START_CASH, "books": books, "scored": int(len(pred))}
     if len(pred):

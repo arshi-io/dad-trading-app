@@ -1694,6 +1694,18 @@ async def api_daily_live() -> JSONResponse:
                          "quotes": {s.removesuffix(".NS"): q for s, q in view.items()}})
 
 
+@app.get("/api/lab/point/{symbol}")
+async def lab_point(symbol: str) -> JSONResponse:
+    """One price for the next 5 sessions plus a BEAT/LAG call, precomputed by code/research/point_forecast.py."""
+    from code.research.point_forecast import OUT
+    try:
+        d = json.loads(OUT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return JSONResponse({"error": "The single-price forecast hasn't been built yet."})
+    return JSONResponse({"asof": d["asof"], "horizon": d["horizon"], "overall": d["overall"], "record_from": d["record_from"],
+                         "stock": d["stocks"].get(_normalize_ticker(symbol).removesuffix(".NS"))})
+
+
 @app.get("/api/lab/zoo")
 async def lab_zoo(horizon: int = 1) -> JSONResponse:
     """Model Zoo results for a horizon, precomputed by code/research/zoo.py."""
