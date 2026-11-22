@@ -114,7 +114,9 @@
     $('week').className = '';
     $('week').innerHTML = `
       <div class="verdict"><span class="big">${nice(w.date)}</span>
-        <span class="word ${w.right ? 'ok' : 'bad'}">${w.right ? 'RIGHT — TOP BEAT BOTTOM' : 'WRONG — BOTTOM BEAT TOP'}</span> ${period}</div>
+        <span class="word ${w.verdict === 'RIGHT' ? 'ok' : w.verdict === 'WRONG' ? 'bad' : 'chose'}">${
+          w.verdict === 'RIGHT' ? 'RIGHT — TOP BEAT BOTTOM' : w.verdict === 'WRONG' ? 'WRONG — BOTTOM BEAT TOP' : 'TIE — NO REAL DIFFERENCE'}</span> ${period}</div>
+      <div class="txt">Top tenth minus bottom tenth: <b class="${cls(w.top - w.bottom)}">${pc(w.top - w.bottom, 2)}</b>. A gap under ${(w.tie_margin * 100).toFixed(2)}% (about one round trip of trading costs) counts as a tie.</div>
       <div class="stats">
         <div><div class="k">Top 10% did</div><div class="v ${cls(w.top)}">${pc(w.top, 2)}</div></div>
         <div><div class="k">All ${w.n} stocks did</div><div class="v ${cls(w.all)}">${pc(w.all, 2)}</div></div>
@@ -128,9 +130,9 @@
     $('record').className = '';
     $('record').innerHTML = `
       <div class="verdict"><span class="big">${r.right.toLocaleString('en-IN')} of ${r.weeks.toLocaleString('en-IN')}</span>
-        <span class="word ${r.right / r.weeks > 0.5 ? 'ok' : 'bad'}">${pc(r.right / r.weeks, 0).replace('+', '')} OF DAYS RIGHT</span></div>
-      <div class="txt">Days where its top tenth beat its bottom tenth over the next 5 sessions, ${nice(w.first)} to ${nice(w.last)}.
-        A coin flip gets 50%. Up to the day shown: ${r.upto_right} of ${r.upto_weeks}.</div>
+        <span class="word ${r.right > r.wrong ? 'ok' : 'bad'}">${pc(r.right / r.weeks, 0).replace('+', '')} RIGHT · ${pc(r.wrong / r.weeks, 0).replace('+', '')} WRONG</span></div>
+      <div class="txt">Days where its top tenth beat its bottom tenth by more than ${(w.tie_margin * 100).toFixed(2)}% over the next 5 sessions, ${nice(w.first)} to ${nice(w.last)}.
+        Wrong (bottom beat top by as much): ${r.wrong.toLocaleString('en-IN')}; the rest were ties. Up to the day shown: ${r.upto_right} of ${r.upto_weeks} right.</div>
       <div class="txt">On average its top tenth made <b class="${cls(r.avg_top)}">${pc(r.avg_top, 2)}</b> and its bottom tenth <b class="${cls(r.avg_bottom)}">${pc(r.avg_bottom, 2)}</b> per 5 sessions, before costs (0.25% a round trip).</div>`;
     const table = (rows, good) => {
       const hits = rows.filter(p => good ? p.vs_median > 0 : p.vs_median < 0).length;

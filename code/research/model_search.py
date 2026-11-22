@@ -247,13 +247,18 @@ def replay_load(path: Path = REPLAY) -> pd.DataFrame:
     return df[df["symbol"].map(is_equity)]
 
 
+TIE_MARGIN = 0.0025   # top vs bottom closer than ~one round trip of costs is a tie, not a win
+
+
 def replay_weeks(df: pd.DataFrame, model: str) -> pd.DataFrame:
-    """Per day: did the model's top tenth beat its bottom tenth over the next 5 sessions?"""
+    """Per day: did the model's top tenth beat its bottom tenth over the next 5 sessions by more
+    than TIE_MARGIN (right), trail it by more (wrong), or neither (tie)?"""
     d = df[df[model].notna()]
     d = d.assign(dec=np.minimum((d[model] * 10).astype(int), 9))
     g = d.groupby(["date", "dec"])["fwd"].mean().unstack()
     out = pd.DataFrame({"top": g.get(9), "bottom": g.get(0), "all": d.groupby("date")["fwd"].mean()}).dropna()
-    return out.assign(right=out["top"] > out["bottom"])
+    gap = out["top"] - out["bottom"]
+    return out.assign(right=gap > TIE_MARGIN, wrong=gap < -TIE_MARGIN)
 
 
 def replay_day(df: pd.DataFrame, weeks: pd.DataFrame, model: str, day: str, picks: int = 10) -> Dict[str, Any]:
@@ -273,11 +278,12 @@ def replay_day(df: pd.DataFrame, weeks: pd.DataFrame, model: str, day: str, pick
         "first": days.min().strftime("%Y-%m-%d"), "last": days.max().strftime("%Y-%m-%d"),
         "n": int(len(rows)), "top": round(float(w["top"]), 4), "bottom": round(float(w["bottom"]), 4),
         "all": round(float(w["all"]), 4), "median": round(float(med), 4), "right": bool(w["right"]),
+        "verdict": "RIGHT" if w["right"] else "WRONG" if w["wrong"] else "TIE", "tie_margin": TIE_MARGIN,
         "ic": round(float(rows[model].corr(rows["fwd"].rank())), 4) if len(rows) > 2 else None,
         "top_beat_median": round(float((top["fwd"] > med).mean()), 4) if len(top) else None,
         "bottom_lagged_median": round(float((bottom["fwd"] < med).mean()), 4) if len(bottom) else None,
         "best_picks": pick(rows.tail(picks).iloc[::-1]), "worst_picks": pick(rows.head(picks)),
-        "record": {"weeks": int(len(weeks)), "right": int(weeks["right"].sum()),
+        "record": {"weeks": int(len(weeks)), "right": int(weeks["right"].sum()), "wrong": int(weeks["wrong"].sum()),
                    "avg_top": round(float(weeks["top"].mean()), 5), "avg_bottom": round(float(weeks["bottom"].mean()), 5),
                    "upto_weeks": int((days <= d0).sum()), "upto_right": int(weeks.loc[:d0, "right"].sum())},
     }
